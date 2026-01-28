@@ -6,17 +6,36 @@
  * Usage:
  * 1. Start PocketBase: cd pocketbase && ./pocketbase.exe serve
  * 2. Create an admin account at http://localhost:8090/_/
- * 3. Run: node scripts/setup-pocketbase.js <admin_email> <admin_password>
+ * 3. Run: node scripts/setup-pocketbase.js
+ * 
+ * Credentials are read from .env.local (POCKETBASE_ADMIN_EMAIL, POCKETBASE_ADMIN_PASSWORD)
  */
 
-const POCKETBASE_URL = process.env.POCKETBASE_URL || 'http://localhost:8090';
+// Load environment variables from .env.local
+const fs = require('fs');
+const path = require('path');
+
+const envPath = path.join(__dirname, '..', '.env.local');
+if (fs.existsSync(envPath)) {
+  const envContent = fs.readFileSync(envPath, 'utf8');
+  envContent.split('\n').forEach(line => {
+    const [key, ...valueParts] = line.split('=');
+    if (key && valueParts.length > 0) {
+      process.env[key.trim()] = valueParts.join('=').trim();
+    }
+  });
+}
+
+const POCKETBASE_URL = process.env.POCKETBASE_URL || process.env.NEXT_PUBLIC_POCKETBASE_URL || 'http://localhost:8090';
 
 async function main() {
-  const [,, email, password] = process.argv;
+  // Use env vars, with command line as fallback
+  const email = process.env.POCKETBASE_ADMIN_EMAIL || process.argv[2];
+  const password = process.env.POCKETBASE_ADMIN_PASSWORD || process.argv[3];
   
   if (!email || !password) {
-    console.error('Usage: node setup-pocketbase.js <admin_email> <admin_password>');
-    console.error('Example: node setup-pocketbase.js admin@example.com mypassword123');
+    console.error('Missing credentials. Set POCKETBASE_ADMIN_EMAIL and POCKETBASE_ADMIN_PASSWORD in .env.local');
+    console.error('Or run: node scripts/setup-pocketbase.js <admin_email> <admin_password>');
     process.exit(1);
   }
 

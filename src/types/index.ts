@@ -7,10 +7,20 @@ export interface BaseRecord {
   collectionName: string;
 }
 
+export type UserRole = 'admin' | 'team';
+
 export interface User extends BaseRecord {
   email: string;
   name: string;
   avatar?: string;
+  role?: UserRole;
+}
+
+export type EmailProvider = 'resend' | 'gmail';
+
+export interface AppSetting extends BaseRecord {
+  key: string;
+  value: Record<string, unknown>;
 }
 
 export type IndustryType = 'text' | 'dropdown';

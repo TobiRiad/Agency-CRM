@@ -22,6 +22,7 @@ import {
   ChevronDown,
   Menu,
   X,
+  Shield,
 } from "lucide-react";
 import type { User } from "@/types";
 
@@ -63,6 +64,8 @@ export default function DashboardLayout({
   const navigation = [
     { name: "Campaigns", href: "/campaigns", icon: LayoutDashboard },
   ];
+
+  const isAdmin = user?.role === "admin";
 
   const isActive = (href: string) => pathname === href || pathname?.startsWith(href + "/");
 
@@ -118,6 +121,21 @@ export default function DashboardLayout({
                 </Link>
               );
             })}
+            
+            {/* Admin Settings */}
+            {isAdmin && (
+              <Link
+                href="/admin/settings"
+                className={`flex items-center space-x-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                  isActive("/admin/settings")
+                    ? "bg-primary text-primary-foreground"
+                    : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
+                }`}
+              >
+                <Shield className="w-5 h-5" />
+                <span>Admin Settings</span>
+              </Link>
+            )}
           </nav>
 
           {/* User menu */}

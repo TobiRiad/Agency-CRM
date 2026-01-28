@@ -1,4 +1,4 @@
-import PocketBase from 'pocketbase';
+import PocketBase, { ClientResponseError } from 'pocketbase';
 import type {
   User,
   Campaign,
@@ -17,6 +17,10 @@ import type {
 } from '@/types';
 
 const POCKETBASE_URL = process.env.NEXT_PUBLIC_POCKETBASE_URL || 'http://localhost:8090';
+
+function isClientResponseError(error: unknown): error is ClientResponseError {
+  return typeof error === 'object' && error !== null && 'status' in error;
+}
 
 // Create a PocketBase instance
 export function createPocketBase() {
@@ -65,6 +69,29 @@ export function getClientPB(): PocketBase {
 // Server-side PocketBase instance (creates new instance each time)
 export function getServerPB(): PocketBase {
   return createPocketBase();
+}
+
+// Server-side PocketBase instance authenticated as superuser/admin (for server routes)
+export async function getServerAdminPB(): Promise<PocketBase> {
+  const pb = createPocketBase();
+
+  const email = process.env.POCKETBASE_ADMIN_EMAIL;
+  const password = process.env.POCKETBASE_ADMIN_PASSWORD;
+
+  if (!email || !password) {
+    throw new Error('Missing POCKETBASE_ADMIN_EMAIL/POCKETBASE_ADMIN_PASSWORD env vars');
+  }
+
+  // PocketBase SDK supports admin auth via pb.admins in most versions.
+  // If unavailable, this will throw and surface a clear error.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const anyPb = pb as any;
+  if (!anyPb.admins?.authWithPassword) {
+    throw new Error('PocketBase admin auth API not available in this SDK version');
+  }
+
+  await anyPb.admins.authWithPassword(email, password);
+  return pb;
 }
 
 // Auth functions
@@ -169,11 +196,21 @@ export async function deleteCompany(pb: PocketBase, id: string): Promise<boolean
 
 // Batch functions
 export async function getBatches(pb: PocketBase, campaignId: string): Promise<Batch[]> {
-  const result = await pb.collection('batches').getList<Batch>(1, 500, {
-    filter: pb.filter('campaign = {:campaignId}', { campaignId }),
-    sort: '-created',
-  });
-  return result.items;
+  try {
+    const result = await pb.collection('batches').getList<Batch>(1, 500, {
+      filter: pb.filter('campaign = {:campaignId}', { campaignId }),
+      sort: '-created',
+    });
+    return result.items;
+  } catch (error) {
+    // If the user's PocketBase instance doesn't have the batches collection yet,
+    // don't fail the whole campaign page — just behave like there are no batches.
+    if (isClientResponseError(error) && (error.status === 404 || error.status === 400)) {
+      console.warn('Batches collection not available yet:', error);
+      return [];
+    }
+    throw error;
+  }
 }
 
 export async function getBatch(pb: PocketBase, id: string): Promise<Batch> {
@@ -202,17 +239,39 @@ export async function getContactsByBatch(pb: PocketBase, batchId: string): Promi
 
 // Contact functions
 export async function getContacts(pb: PocketBase, campaignId: string): Promise<Contact[]> {
-  const result = await pb.collection('contacts').getList<Contact>(1, 500, {
-    filter: pb.filter('campaign = {:campaignId}', { campaignId }),
-    expand: 'company,batch,created_by',
-  });
-  return result.items;
+  try {
+    const result = await pb.collection('contacts').getList<Contact>(1, 500, {
+      filter: pb.filter('campaign = {:campaignId}', { campaignId }),
+      expand: 'company,batch,created_by',
+    });
+    return result.items;
+  } catch (error) {
+    // Fallback if the contacts collection doesn't have the batch relation yet.
+    if (isClientResponseError(error) && error.status === 400) {
+      const result = await pb.collection('contacts').getList<Contact>(1, 500, {
+        filter: pb.filter('campaign = {:campaignId}', { campaignId }),
+        expand: 'company,created_by',
+      });
+      return result.items;
+    }
+    throw error;
+  }
 }
 
 export async function getContact(pb: PocketBase, id: string): Promise<Contact> {
-  return pb.collection('contacts').getOne<Contact>(id, {
-    expand: 'company,batch,created_by',
-  });
+  try {
+    return await pb.collection('contacts').getOne<Contact>(id, {
+      expand: 'company,batch,created_by',
+    });
+  } catch (error) {
+    // Fallback if the contacts collection doesn't have the batch relation yet.
+    if (isClientResponseError(error) && error.status === 400) {
+      return await pb.collection('contacts').getOne<Contact>(id, {
+        expand: 'company,created_by',
+      });
+    }
+    throw error;
+  }
 }
 
 export async function createContact(pb: PocketBase, data: {

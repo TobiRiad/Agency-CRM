@@ -1,112 +1,116 @@
-import { type ClassValue, clsx } from "clsx";
-import { twMerge } from "tailwind-merge";
+import { clsx, type ClassValue } from "clsx"
+import { twMerge } from "tailwind-merge"
 
 export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
+  return twMerge(clsx(inputs))
 }
 
-export function formatDate(date: string | Date | undefined | null): string {
-  if (!date) return 'N/A';
-  try {
-    const d = new Date(date);
-    if (isNaN(d.getTime())) return 'N/A';
-    return new Intl.DateTimeFormat('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-    }).format(d);
-  } catch {
-    return 'N/A';
-  }
+export function formatDate(input: string | Date): string {
+  const date = input instanceof Date ? input : new Date(input)
+  if (Number.isNaN(date.getTime())) return ""
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+  }).format(date)
 }
 
-export function formatDateTime(date: string | Date | undefined | null): string {
-  if (!date) return 'N/A';
-  try {
-    const d = new Date(date);
-    if (isNaN(d.getTime())) return 'N/A';
-    return new Intl.DateTimeFormat('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    }).format(d);
-  } catch {
-    return 'N/A';
-  }
+export function formatDateTime(input: string | Date): string {
+  const date = input instanceof Date ? input : new Date(input)
+  if (Number.isNaN(date.getTime())) return ""
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date)
 }
 
-export function formatPercentage(value: number): string {
-  return `${(value * 100).toFixed(1)}%`;
+export function formatPercentage(value: number, decimals = 1): string {
+  if (!Number.isFinite(value)) return "0%"
+  return `${(value * 100).toFixed(decimals)}%`
 }
 
 export function calculateRate(numerator: number, denominator: number): number {
-  if (denominator === 0) return 0;
-  return numerator / denominator;
+  if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator <= 0) return 0
+  return numerator / denominator
 }
 
-export function interpolateTemplate(template: string, data: Record<string, string>): string {
-  return template.replace(/\{\{(\w+)\}\}/g, (match, key) => {
-    return data[key] || match;
-  });
+export function groupBy<T, K extends string | number>(
+  items: T[],
+  getKey: (item: T) => K
+): Record<K, T[]> {
+  return items.reduce((acc, item) => {
+    const key = getKey(item)
+    ;(acc[key] ||= []).push(item)
+    return acc
+  }, {} as Record<K, T[]>)
 }
 
-export function generateId(): string {
-  return Math.random().toString(36).substring(2, 15);
-}
-
-export function truncate(str: string, length: number): string {
-  if (str.length <= length) return str;
-  return str.slice(0, length) + '...';
-}
-
-export function debounce<T extends (...args: unknown[]) => unknown>(
-  func: T,
-  wait: number
-): (...args: Parameters<T>) => void {
-  let timeout: NodeJS.Timeout | null = null;
-  return (...args: Parameters<T>) => {
-    if (timeout) clearTimeout(timeout);
-    timeout = setTimeout(() => func(...args), wait);
-  };
-}
-
-export function groupBy<T>(array: T[], key: keyof T): Record<string, T[]> {
-  return array.reduce((result, item) => {
-    const groupKey = String(item[key]);
-    if (!result[groupKey]) {
-      result[groupKey] = [];
-    }
-    result[groupKey].push(item);
-    return result;
-  }, {} as Record<string, T[]>);
-}
-
-export function sortByOrder<T extends { order: number }>(items: T[]): T[] {
-  return [...items].sort((a, b) => a.order - b.order);
-}
-
+// Funnel stage helpers (used by campaign settings UI)
 export const FUNNEL_STAGE_COLORS = [
-  '#3b82f6', // blue
-  '#8b5cf6', // purple
-  '#ec4899', // pink
-  '#f97316', // orange
-  '#22c55e', // green
-  '#06b6d4', // cyan
-  '#eab308', // yellow
-  '#ef4444', // red
-];
-
-export function getStageColor(index: number): string {
-  return FUNNEL_STAGE_COLORS[index % FUNNEL_STAGE_COLORS.length];
-}
+  "slate",
+  "gray",
+  "zinc",
+  "neutral",
+  "stone",
+  "red",
+  "orange",
+  "amber",
+  "yellow",
+  "lime",
+  "green",
+  "emerald",
+  "teal",
+  "cyan",
+  "sky",
+  "blue",
+  "indigo",
+  "violet",
+  "purple",
+  "fuchsia",
+  "pink",
+  "rose",
+] as const
 
 export const DEFAULT_FUNNEL_STAGES = [
-  { name: 'Initial Outreach', order: 0 },
-  { name: 'Seen', order: 1 },
-  { name: 'Replied', order: 2 },
-  { name: 'Follow-up 1', order: 3 },
-  { name: 'Follow-up 2', order: 4 },
-  { name: 'Converted', order: 5 },
-];
+  { name: "Uncategorized", color: "gray" },
+  { name: "New", color: "blue" },
+  { name: "Contacted", color: "indigo" },
+  { name: "Interested", color: "violet" },
+  { name: "Meeting Set", color: "purple" },
+  { name: "Won", color: "green" },
+  { name: "Lost", color: "red" },
+] as const
+
+export function getStageColor(color: string): string {
+  // Maps a semantic color name to Tailwind classes used across the UI.
+  // Keep this conservative: default to gray if an unknown color is passed.
+  const c = (color || "gray").toLowerCase()
+  const map: Record<string, string> = {
+    slate: "bg-slate-100 text-slate-800 border-slate-200",
+    gray: "bg-gray-100 text-gray-800 border-gray-200",
+    zinc: "bg-zinc-100 text-zinc-800 border-zinc-200",
+    neutral: "bg-neutral-100 text-neutral-800 border-neutral-200",
+    stone: "bg-stone-100 text-stone-800 border-stone-200",
+    red: "bg-red-100 text-red-800 border-red-200",
+    orange: "bg-orange-100 text-orange-800 border-orange-200",
+    amber: "bg-amber-100 text-amber-800 border-amber-200",
+    yellow: "bg-yellow-100 text-yellow-800 border-yellow-200",
+    lime: "bg-lime-100 text-lime-800 border-lime-200",
+    green: "bg-green-100 text-green-800 border-green-200",
+    emerald: "bg-emerald-100 text-emerald-800 border-emerald-200",
+    teal: "bg-teal-100 text-teal-800 border-teal-200",
+    cyan: "bg-cyan-100 text-cyan-800 border-cyan-200",
+    sky: "bg-sky-100 text-sky-800 border-sky-200",
+    blue: "bg-blue-100 text-blue-800 border-blue-200",
+    indigo: "bg-indigo-100 text-indigo-800 border-indigo-200",
+    violet: "bg-violet-100 text-violet-800 border-violet-200",
+    purple: "bg-purple-100 text-purple-800 border-purple-200",
+    fuchsia: "bg-fuchsia-100 text-fuchsia-800 border-fuchsia-200",
+    pink: "bg-pink-100 text-pink-800 border-pink-200",
+    rose: "bg-rose-100 text-rose-800 border-rose-200",
+  }
+  return map[c] || map.gray
+}
