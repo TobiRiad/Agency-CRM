@@ -34,6 +34,7 @@ export default function AdminSettingsPage() {
   const [emailProvider, setEmailProvider] = useState<EmailProvider>("resend");
   const [gmailEmail, setGmailEmail] = useState("");
   const [isGmailConnected, setIsGmailConnected] = useState(false);
+  const [senderName, setSenderName] = useState("");
 
   useEffect(() => {
     const loadData = async () => {
@@ -62,6 +63,9 @@ export default function AdminSettingsPage() {
           }
           if (setting.key === "gmail_email") {
             setGmailEmail((setting.value as { email: string })?.email || "");
+          }
+          if (setting.key === "sender_name") {
+            setSenderName((setting.value as { name: string })?.name || "");
           }
           if (setting.key === "gmail_refresh_token") {
             setIsGmailConnected(true);
@@ -140,6 +144,21 @@ export default function AdminSettingsPage() {
             value: { email: gmailEmail },
           });
         }
+      }
+
+      // Save sender name (used as the display name for Gmail From:)
+      const senderExisting = await pb.collection("app_settings").getList(1, 1, {
+        filter: 'key = "sender_name"',
+      });
+      if (senderExisting.items.length > 0) {
+        await pb.collection("app_settings").update(senderExisting.items[0].id, {
+          value: { name: senderName },
+        });
+      } else {
+        await pb.collection("app_settings").create({
+          key: "sender_name",
+          value: { name: senderName },
+        });
       }
 
       toast({
@@ -342,6 +361,21 @@ export default function AdminSettingsPage() {
                       />
                       <p className="text-xs text-muted-foreground">
                         This email address will be used as the sender for all campaign emails.
+                      </p>
+                    </div>
+
+                    {/* Sender Name Input */}
+                    <div className="space-y-2">
+                      <Label htmlFor="senderName">Sender name (display name)</Label>
+                      <Input
+                        id="senderName"
+                        type="text"
+                        placeholder="Tobi from JohnRiad Agency"
+                        value={senderName}
+                        onChange={(e) => setSenderName(e.target.value)}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        This controls the name recipients see in their inbox (e.g. “{senderName || "Your Name"} &lt;{gmailEmail || "you@company.com"}&gt;”).
                       </p>
                     </div>
 

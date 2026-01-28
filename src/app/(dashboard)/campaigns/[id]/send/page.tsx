@@ -60,6 +60,8 @@ import type {
   ContactFieldValue,
   FunnelStage,
   ContactStage,
+  EmailProvider,
+  AppSetting,
 } from "@/types";
 import { interpolateTemplate } from "@/lib/utils";
 
@@ -89,6 +91,10 @@ export default function SendEmailPage() {
   const [selectedGroup, setSelectedGroup] = useState<string>("");
   const [fromEmail, setFromEmail] = useState("noreply@yourdomain.com");
   const [replyTo, setReplyTo] = useState("");
+
+  // Provider settings (global)
+  const [emailProvider, setEmailProvider] = useState<EmailProvider>("resend");
+  const [configuredGmailEmail, setConfiguredGmailEmail] = useState<string>("");
 
   // Send state
   const [step, setStep] = useState<SendStep>("select");
@@ -165,6 +171,44 @@ export default function SendEmailPage() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    // Load global email provider settings so we can tailor the UI
+    const loadEmailProvider = async () => {
+      try {
+        const pb = getClientPB();
+        const settings = await pb.collection("app_settings").getList<AppSetting>(1, 10, {
+          filter: 'key = "email_provider" || key = "gmail_email"',
+        });
+
+        let provider: EmailProvider = "resend";
+        let gmailEmail = "";
+
+        for (const s of settings.items) {
+          if (s.key === "email_provider") {
+            provider = (s.value as { provider: EmailProvider })?.provider || "resend";
+          }
+          if (s.key === "gmail_email") {
+            gmailEmail = (s.value as { email: string })?.email || "";
+          }
+        }
+
+        setEmailProvider(provider);
+        setConfiguredGmailEmail(gmailEmail);
+
+        // When Gmail is selected, auto-fill local state (but we won't show inputs)
+        if (provider === "gmail" && gmailEmail) {
+          setFromEmail(gmailEmail);
+          setReplyTo(gmailEmail);
+        }
+      } catch (e) {
+        // If settings aren't available, just fall back to resend behavior.
+        setEmailProvider("resend");
+      }
+    };
+
+    loadEmailProvider();
+  }, []);
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
@@ -268,8 +312,13 @@ export default function SendEmailPage() {
             to: contact.email,
             subject: interpolateTemplate(template.subject, contactData),
             html: interpolateTemplate(template.body, contactData),
-            from: fromEmail,
-            replyTo: replyTo || undefined,
+            // If Gmail is configured as the provider, the server will use the configured Gmail address.
+            ...(emailProvider === "gmail"
+              ? {}
+              : {
+                  from: fromEmail,
+                  replyTo: replyTo || undefined,
+                }),
           }),
         });
 
@@ -343,28 +392,41 @@ export default function SendEmailPage() {
               <CardDescription>Configure your sending options</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="from">From Email</Label>
-                  <Input
-                    id="from"
-                    type="email"
-                    value={fromEmail}
-                    onChange={(e) => setFromEmail(e.target.value)}
-                    placeholder="noreply@yourdomain.com"
-                  />
+              {emailProvider === "gmail" ? (
+                <div className="rounded-lg border p-4 bg-slate-50 dark:bg-slate-900">
+                  <div className="flex items-center gap-2">
+                    <Mail className="h-4 w-4 text-muted-foreground" />
+                    <p className="text-sm font-medium">Sending via Google Workspace</p>
+                  </div>
+                  <p className="text-sm text-muted-foreground mt-2">
+                    Emails will be sent from <span className="font-medium text-foreground">{configuredGmailEmail || "your connected Gmail account"}</span>.
+                    From/Reply-To are managed automatically.
+                  </p>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="replyTo">Reply-To (optional)</Label>
-                  <Input
-                    id="replyTo"
-                    type="email"
-                    value={replyTo}
-                    onChange={(e) => setReplyTo(e.target.value)}
-                    placeholder="you@yourdomain.com"
-                  />
+              ) : (
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="from">From Email</Label>
+                    <Input
+                      id="from"
+                      type="email"
+                      value={fromEmail}
+                      onChange={(e) => setFromEmail(e.target.value)}
+                      placeholder="noreply@yourdomain.com"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="replyTo">Reply-To (optional)</Label>
+                    <Input
+                      id="replyTo"
+                      type="email"
+                      value={replyTo}
+                      onChange={(e) => setReplyTo(e.target.value)}
+                      placeholder="you@yourdomain.com"
+                    />
+                  </div>
                 </div>
-              </div>
+              )}
 
               <div className="space-y-2">
                 <Label>Template Group</Label>
@@ -502,8 +564,12 @@ export default function SendEmailPage() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Check className="h-5 w-5 text-green-500" />
-              Sending Complete
+              {sendResults.failed > 0 ? (
+                <AlertCircle className="h-5 w-5 text-amber-500" />
+              ) : (
+                <Check className="h-5 w-5 text-green-500" />
+              )}
+              {sendResults.failed > 0 ? "Sending Finished (with errors)" : "Sending Complete"}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -533,7 +599,7 @@ export default function SendEmailPage() {
             {sendResults.errors.length > 0 && (
               <div className="space-y-2">
                 <h4 className="font-medium">Errors:</h4>
-                <div className="text-sm space-y-1 text-muted-foreground max-h-40 overflow-y-auto">
+                <div className="text-sm space-y-1 text-red-700 dark:text-red-300 max-h-40 overflow-y-auto">
                   {sendResults.errors.map((error, i) => (
                     <p key={i}>{error}</p>
                   ))}

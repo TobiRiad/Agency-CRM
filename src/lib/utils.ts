@@ -114,3 +114,17 @@ export function getStageColor(color: string): string {
   }
   return map[c] || map.gray
 }
+
+// Template interpolation for email subjects/bodies.
+// Supports {{variable}} placeholders (e.g. {{first_name}}).
+export function interpolateTemplate(
+  template: string,
+  data: Record<string, string | number | boolean | null | undefined>
+): string {
+  if (!template) return ""
+  return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, key: string) => {
+    const val = data[key]
+    if (val === null || val === undefined) return ""
+    return String(val)
+  })
+}

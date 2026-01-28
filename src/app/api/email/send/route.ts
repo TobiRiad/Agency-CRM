@@ -1,24 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sendEmail } from "@/lib/resend";
 import { sendGmail, GmailConfig } from "@/lib/gmail";
-import { getServerPB, createEmailSend } from "@/lib/pocketbase";
+import { getServerAdminPB, getServerPB, createEmailSend } from "@/lib/pocketbase";
 
 type EmailProvider = "resend" | "gmail";
 
 interface EmailProviderSettings {
   provider: EmailProvider;
   gmailEmail?: string;
+  senderName?: string;
 }
 
 async function getEmailProviderSettings(): Promise<EmailProviderSettings> {
   try {
-    const pb = getServerPB();
+    // Use admin PB so we can read app_settings on the server
+    const pb = await getServerAdminPB();
     const settings = await pb.collection("app_settings").getList(1, 10, {
-      filter: 'key = "email_provider" || key = "gmail_email"',
+      filter: 'key = "email_provider" || key = "gmail_email" || key = "sender_name"',
     });
 
     let provider: EmailProvider = "resend";
     let gmailEmail: string | undefined;
+    let senderName: string | undefined;
 
     for (const setting of settings.items) {
       if (setting.key === "email_provider") {
@@ -27,9 +30,12 @@ async function getEmailProviderSettings(): Promise<EmailProviderSettings> {
       if (setting.key === "gmail_email") {
         gmailEmail = (setting.value as { email: string })?.email;
       }
+      if (setting.key === "sender_name") {
+        senderName = (setting.value as { name: string })?.name;
+      }
     }
 
-    return { provider, gmailEmail };
+    return { provider, gmailEmail, senderName };
   } catch (error) {
     console.error("Failed to get email provider settings:", error);
     return { provider: "resend" };
@@ -38,7 +44,8 @@ async function getEmailProviderSettings(): Promise<EmailProviderSettings> {
 
 async function getGmailConfig(userEmail: string): Promise<GmailConfig | null> {
   try {
-    const pb = getServerPB();
+    // Use admin PB so we can read gmail_refresh_token on the server
+    const pb = await getServerAdminPB();
     const tokenSetting = await pb.collection("app_settings").getList(1, 1, {
       filter: 'key = "gmail_refresh_token"',
     });
@@ -78,7 +85,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Get email provider settings
-    const { provider, gmailEmail } = await getEmailProviderSettings();
+    const { provider, gmailEmail, senderName } = await getEmailProviderSettings();
     
     let result: { success: boolean; id?: string; error?: string };
 
@@ -98,8 +105,12 @@ export async function POST(request: NextRequest) {
           to,
           subject,
           html,
-          from: from || `${gmailEmail.split("@")[0]} <${gmailEmail}>`,
-          replyTo,
+          from:
+            from ||
+            `${(senderName || gmailEmail.split("@")[0]).trim()} <${gmailEmail}>`,
+          // For Gmail/Workspace we don't set Reply-To by default.
+          // Replies will naturally go back to the sending mailbox.
+          replyTo: replyTo || undefined,
         },
         gmailConfig
       );
