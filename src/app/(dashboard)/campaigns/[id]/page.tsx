@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, Fragment } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -19,11 +19,17 @@ import {
   getContactStages,
   setContactStage,
   getBatches,
+  createBatch,
   getCurrentUser,
+  getContactsByCompany,
+  pushCompanyToOutreach,
+  getOutreachCampaigns,
+  getAIScoringConfigs,
 } from "@/lib/pocketbase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -72,8 +78,15 @@ import {
   Filter,
   Send,
   GitBranch,
+  Sparkles,
+  ArrowRight,
+  Loader2,
+  Star,
+  ExternalLink,
+  Users,
+  Layers,
 } from "lucide-react";
-import type { Campaign, Contact, Company, CustomField, ContactFieldValue, FunnelStage, ContactStage, Batch } from "@/types";
+import type { Campaign, Contact, Company, CustomField, ContactFieldValue, FunnelStage, ContactStage, Batch, AIScoringConfig } from "@/types";
 
 export default function CampaignPage() {
   const params = useParams();
@@ -82,6 +95,10 @@ export default function CampaignPage() {
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
+  const [sourceCompanies, setSourceCompanies] = useState<Map<string, Company>>(new Map());
+  const [editingContactId, setEditingContactId] = useState<string | null>(null);
+  const [editingContact, setEditingContact] = useState<Partial<Contact>>({});
+  const [generatingOpenerId, setGeneratingOpenerId] = useState<string | null>(null);
   const [customFields, setCustomFields] = useState<CustomField[]>([]);
   const [fieldValues, setFieldValues] = useState<Map<string, Map<string, string>>>(new Map());
   const [funnelStages, setFunnelStages] = useState<FunnelStage[]>([]);
@@ -91,9 +108,12 @@ export default function CampaignPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [stageFilter, setStageFilter] = useState<string>("all");
+  const [batchFilter, setBatchFilter] = useState<string>("all");
   const [isAddContactOpen, setIsAddContactOpen] = useState(false);
   const [isAddCompanyOpen, setIsAddCompanyOpen] = useState(false);
+  const [isAddBatchOpen, setIsAddBatchOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [newBatchName, setNewBatchName] = useState("");
 
   const [newContact, setNewContact] = useState({
     email: "",
@@ -108,6 +128,30 @@ export default function CampaignPage() {
     name: "",
     website: "",
     industry: "",
+    email: "",
+    description: "",
+    batch: "",
+  });
+
+  // Leads-specific state
+  const [companyContacts, setCompanyContacts] = useState<Map<string, Contact[]>>(new Map());
+  const [aiConfigs, setAiConfigs] = useState<AIScoringConfig[]>([]);
+  const [outreachCampaigns, setOutreachCampaigns] = useState<Campaign[]>([]);
+  const [scoringCompanyId, setScoringCompanyId] = useState<string | null>(null);
+  const [pushingCompanyId, setPushingCompanyId] = useState<string | null>(null);
+  const [selectedOutreachCampaign, setSelectedOutreachCampaign] = useState<string>("");
+  const [selectedFunnelStage, setSelectedFunnelStage] = useState<string>("");
+  const [selectedBatch, setSelectedBatch] = useState<string>("");
+  const [isPushDialogOpen, setIsPushDialogOpen] = useState(false);
+  const [outreachCampaignFunnelStages, setOutreachCampaignFunnelStages] = useState<FunnelStage[]>([]);
+  const [outreachCampaignBatches, setOutreachCampaignBatches] = useState<Batch[]>([]);
+  const [selectedCompanyForPerson, setSelectedCompanyForPerson] = useState<string>("");
+  const [isAddPersonOpen, setIsAddPersonOpen] = useState(false);
+  const [newPerson, setNewPerson] = useState({
+    email: "",
+    first_name: "",
+    last_name: "",
+    title: "",
   });
 
   // State for inline company creation during contact creation
@@ -121,14 +165,18 @@ export default function CampaignPage() {
   const loadData = useCallback(async () => {
     try {
       const pb = getClientPB();
-      const [campaignData, contactsData, companiesData, fieldsData, stagesData, contactStagesData, batchesData] = await Promise.all([
-        getCampaign(pb, campaignId),
+      const campaignData = await getCampaign(pb, campaignId);
+      
+      // Load batches for all campaign types
+      const batchesPromise = getBatches(pb, campaignId);
+
+      const [contactsData, companiesData, fieldsData, stagesData, contactStagesData, batchesData] = await Promise.all([
         getContacts(pb, campaignId),
         getCompanies(pb, campaignId),
         getCustomFields(pb, campaignId),
         getFunnelStages(pb, campaignId),
         getContactStages(pb, campaignId),
-        getBatches(pb, campaignId),
+        batchesPromise,
       ]);
 
       setCampaign(campaignData);
@@ -137,6 +185,29 @@ export default function CampaignPage() {
       setCustomFields(fieldsData);
       setFunnelStages(stagesData.sort((a, b) => a.order - b.order));
       setBatches(batchesData);
+
+      // For outreach campaigns, load source companies (from lead campaigns)
+      if (campaignData.kind === 'outreach' || !campaignData.kind) {
+        const sourceCompanyIds = new Set<string>();
+        contactsData.forEach((contact) => {
+          if (contact.source_company) {
+            sourceCompanyIds.add(contact.source_company);
+          }
+        });
+
+        if (sourceCompanyIds.size > 0) {
+          const sourceCompaniesMap = new Map<string, Company>();
+          for (const companyId of sourceCompanyIds) {
+            try {
+              const company = await pb.collection('companies').getOne<Company>(companyId);
+              sourceCompaniesMap.set(companyId, company);
+            } catch (error) {
+              console.error(`Failed to load source company ${companyId}:`, error);
+            }
+          }
+          setSourceCompanies(sourceCompaniesMap);
+        }
+      }
 
       // Create contact -> stage mapping
       const stageMap = new Map<string, string>();
@@ -159,6 +230,28 @@ export default function CampaignPage() {
           valueMap.get(v.contact)!.set(v.custom_field, v.value);
         });
         setFieldValues(valueMap);
+      }
+
+      // If this is a leads campaign, load company contacts and AI configs
+      if (campaignData.kind === 'leads') {
+        const user = getCurrentUser(pb);
+        if (user) {
+          // Load contacts grouped by company
+          const contactsByCompany = new Map<string, Contact[]>();
+          for (const company of companiesData) {
+            const companyPeople = await getContactsByCompany(pb, company.id);
+            contactsByCompany.set(company.id, companyPeople);
+          }
+          setCompanyContacts(contactsByCompany);
+
+          // Load AI scoring configs
+          const configs = await getAIScoringConfigs(pb, campaignId);
+          setAiConfigs(configs);
+
+          // Load outreach campaigns for push dropdown
+          const outreach = await getOutreachCampaigns(pb, user.id);
+          setOutreachCampaigns(outreach);
+        }
       }
     } catch (error) {
       console.error("Failed to load campaign data:", error);
@@ -252,7 +345,12 @@ export default function CampaignPage() {
       const pb = getClientPB();
       const currentUser = getCurrentUser(pb);
       await createCompany(pb, {
-        ...newCompany,
+        name: newCompany.name,
+        website: newCompany.website,
+        industry: newCompany.industry,
+        email: newCompany.email || undefined,
+        description: newCompany.description || undefined,
+        batch: newCompany.batch || undefined,
         campaign: campaignId,
         created_by: currentUser?.id,
       });
@@ -267,6 +365,9 @@ export default function CampaignPage() {
         name: "",
         website: "",
         industry: "",
+        email: "",
+        description: "",
+        batch: "",
       });
       setIsAddCompanyOpen(false);
       loadData();
@@ -275,6 +376,39 @@ export default function CampaignPage() {
       toast({
         title: "Error",
         description: "Failed to add company. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  const handleAddBatch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newBatchName.trim()) return;
+
+    setIsCreating(true);
+    try {
+      const pb = getClientPB();
+      await createBatch(pb, {
+        name: newBatchName,
+        campaign: campaignId,
+      });
+
+      toast({
+        title: "Batch created",
+        description: "The batch has been created successfully.",
+        variant: "success",
+      });
+
+      setNewBatchName("");
+      setIsAddBatchOpen(false);
+      loadData();
+    } catch (error) {
+      console.error("Failed to create batch:", error);
+      toast({
+        title: "Error",
+        description: "Failed to create batch. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -321,6 +455,157 @@ export default function CampaignPage() {
       newSelection.delete(contactId);
     }
     setSelectedContacts(newSelection);
+  };
+
+  const handleScoreLead = async (companyId: string) => {
+    if (aiConfigs.length === 0) {
+      toast({
+        title: "No AI Config",
+        description: "Please set up an AI scoring config in campaign settings first.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setScoringCompanyId(companyId);
+    try {
+      const config = aiConfigs[0]; // Use first config for now
+      const response = await fetch("/api/ai/score-lead", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          companyId,
+          configId: config.id,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        toast({
+          title: "Lead Scored",
+          description: `Score: ${result.result.score || "N/A"}, Classification: ${result.result.classification || "N/A"}`,
+        });
+        loadData(); // Reload to show updated scores
+      } else {
+        throw new Error(result.error || "Failed to score lead");
+      }
+    } catch (error) {
+      console.error("Failed to score lead:", error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to score lead",
+        variant: "destructive",
+      });
+    } finally {
+      setScoringCompanyId(null);
+    }
+  };
+
+  const handlePushToOutreach = async (companyId: string) => {
+    if (!selectedOutreachCampaign) {
+      toast({
+        title: "Select Campaign",
+        description: "Please select an outreach campaign to push to.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setPushingCompanyId(companyId);
+    try {
+      const pb = getClientPB();
+      const createdContacts = await pushCompanyToOutreach(
+        pb, 
+        companyId, 
+        selectedOutreachCampaign,
+        selectedFunnelStage || undefined,
+        selectedBatch || undefined
+      );
+
+      if (createdContacts.length > 0) {
+        toast({
+          title: "Pushed to Outreach",
+          description: `Created ${createdContacts.length} contact(s) in outreach campaign.`,
+        });
+        setIsPushDialogOpen(false);
+        setSelectedOutreachCampaign("");
+        setSelectedFunnelStage("");
+        setSelectedBatch("");
+      } else {
+        toast({
+          title: "No Contacts Created",
+          description: "All contacts already exist in the outreach campaign or company has no email/people.",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error("Failed to push to outreach:", error);
+      toast({
+        title: "Error",
+        description: "Failed to push company to outreach.",
+        variant: "destructive",
+      });
+    } finally {
+      setPushingCompanyId(null);
+    }
+  };
+
+  // Load funnel stages and batches when outreach campaign is selected
+  useEffect(() => {
+    const loadOutreachCampaignData = async () => {
+      if (!selectedOutreachCampaign) {
+        setOutreachCampaignFunnelStages([]);
+        setOutreachCampaignBatches([]);
+        return;
+      }
+
+      try {
+        const pb = getClientPB();
+        const [stages, batches] = await Promise.all([
+          getFunnelStages(pb, selectedOutreachCampaign),
+          getBatches(pb, selectedOutreachCampaign),
+        ]);
+        setOutreachCampaignFunnelStages(stages.sort((a, b) => a.order - b.order));
+        setOutreachCampaignBatches(batches);
+      } catch (error) {
+        console.error("Failed to load outreach campaign data:", error);
+      }
+    };
+
+    loadOutreachCampaignData();
+  }, [selectedOutreachCampaign]);
+
+  const handleGenerateOpener = async (contactId: string) => {
+    setGeneratingOpenerId(contactId);
+    try {
+      const response = await fetch("/api/ai/generate-opener", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contactId }),
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        toast({
+          title: "AI Opener Generated",
+          description: "AI opener has been generated successfully.",
+        });
+        loadData(); // Reload to show the opener
+      } else {
+        throw new Error(result.error || "Failed to generate opener");
+      }
+    } catch (error) {
+      console.error("Failed to generate opener:", error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to generate AI opener",
+        variant: "destructive",
+      });
+    } finally {
+      setGeneratingOpenerId(null);
+    }
   };
 
   const handleStageChange = async (contactId: string, newStageId: string) => {
@@ -372,6 +657,17 @@ export default function CampaignPage() {
       if (contactStageId !== stageFilter) return false;
     }
 
+    // Apply batch filter
+    if (batchFilter !== "all") {
+      if (batchFilter === "none") {
+        // Filter for contacts with no batch
+        if (contact.batch) return false;
+      } else {
+        // Filter for specific batch
+        if (contact.batch !== batchFilter) return false;
+      }
+    }
+
     // Apply search filter
     if (!searchQuery) return true;
     const query = searchQuery.toLowerCase();
@@ -387,6 +683,21 @@ export default function CampaignPage() {
   const getFieldValue = (contactId: string, fieldId: string): string => {
     return fieldValues.get(contactId)?.get(fieldId) || "";
   };
+
+  // Filter companies by batch (for leads campaigns)
+  const filteredCompanies = companies.filter((company) => {
+    // Apply batch filter
+    if (batchFilter !== "all") {
+      if (batchFilter === "none") {
+        // Filter for companies with no batch
+        if (company.batch) return false;
+      } else {
+        // Filter for specific batch
+        if (company.batch !== batchFilter) return false;
+      }
+    }
+    return true;
+  });
 
   if (isLoading) {
     return (
@@ -408,6 +719,705 @@ export default function CampaignPage() {
     );
   }
 
+  // Leads campaign view (company-first with people nested)
+  if (campaign.kind === 'leads') {
+    return (
+      <div className="space-y-6">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-6 w-6 text-primary" />
+              <h1 className="text-3xl font-bold">{campaign.name}</h1>
+            </div>
+            <p className="text-muted-foreground mt-1">
+              {campaign.description || "No description"}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" asChild>
+              <Link href={`/campaigns/${campaignId}/settings`}>
+                <Settings className="mr-2 h-4 w-4" />
+                Settings
+              </Link>
+            </Button>
+            <Dialog open={isAddCompanyOpen} onOpenChange={setIsAddCompanyOpen}>
+              <DialogTrigger asChild>
+                <Button>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Lead Company
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-2xl">
+                <form onSubmit={handleAddCompany}>
+                  <DialogHeader>
+                    <DialogTitle>Add Lead Company</DialogTitle>
+                    <DialogDescription>
+                      Add a new company to qualify and potentially push to outreach.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-4 py-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="company_name">Company Name *</Label>
+                      <Input
+                        id="company_name"
+                        value={newCompany.name}
+                        onChange={(e) =>
+                          setNewCompany({ ...newCompany, name: e.target.value })
+                        }
+                        required
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="website">Website</Label>
+                        <Input
+                          id="website"
+                          type="url"
+                          placeholder="https://example.com"
+                          value={newCompany.website}
+                          onChange={(e) =>
+                            setNewCompany({ ...newCompany, website: e.target.value })
+                          }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="email">Company Email</Label>
+                        <Input
+                          id="email"
+                          type="email"
+                          placeholder="sales@company.com"
+                          value={newCompany.email}
+                          onChange={(e) =>
+                            setNewCompany({ ...newCompany, email: e.target.value })
+                          }
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="description">Description</Label>
+                      <Textarea
+                        id="description"
+                        placeholder="Brief description of the company..."
+                        value={newCompany.description}
+                        onChange={(e) =>
+                          setNewCompany({ ...newCompany, description: e.target.value })
+                        }
+                        rows={3}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="industry">Industry</Label>
+                      {campaign?.industry_type === "dropdown" && campaign.industry_options?.length > 0 ? (
+                        <Select
+                          value={newCompany.industry}
+                          onValueChange={(value) =>
+                            setNewCompany({ ...newCompany, industry: value })
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select an industry" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {campaign.industry_options.map((option) => (
+                              <SelectItem key={option} value={option}>
+                                {option}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Input
+                          id="industry"
+                          placeholder="e.g., SaaS, Agency"
+                          value={newCompany.industry}
+                          onChange={(e) =>
+                            setNewCompany({ ...newCompany, industry: e.target.value })
+                          }
+                        />
+                      )}
+                    </div>
+                    {batches.length > 0 && (
+                      <div className="space-y-2">
+                        <Label htmlFor="company_batch">Batch</Label>
+                        <Select
+                          value={newCompany.batch}
+                          onValueChange={(value) =>
+                            setNewCompany({ ...newCompany, batch: value === "__none__" ? "" : value })
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select a batch (optional)" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__">No batch</SelectItem>
+                            {batches.map((batch) => (
+                              <SelectItem key={batch.id} value={batch.id}>
+                                {batch.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+                  </div>
+                  <DialogFooter>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setIsAddCompanyOpen(false)}
+                    >
+                      Cancel
+                    </Button>
+                    <Button type="submit" disabled={isCreating}>
+                      {isCreating ? "Adding..." : "Add Company"}
+                    </Button>
+                  </DialogFooter>
+                </form>
+              </DialogContent>
+            </Dialog>
+          </div>
+        </div>
+
+        {/* Batch Toolbar for Leads */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            {batches.length > 0 && (
+              <div className="flex items-center gap-1">
+                <Select value={batchFilter} onValueChange={setBatchFilter}>
+                  <SelectTrigger className="w-[200px]">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Layers className="h-4 w-4 flex-shrink-0" />
+                      {(() => {
+                        if (batchFilter === "all") {
+                          return <span className="truncate">All Batches</span>;
+                        }
+                        if (batchFilter === "none") {
+                          return <span className="truncate">No Batch</span>;
+                        }
+                        const batch = batches.find(b => b.id === batchFilter);
+                        if (batch) {
+                          return <span className="truncate">{batch.name}</span>;
+                        }
+                        return <span className="truncate">Filter by batch</span>;
+                      })()}
+                    </div>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Batches</SelectItem>
+                    <SelectItem value="none">No Batch</SelectItem>
+                    {batches.map((batch) => (
+                      <SelectItem key={batch.id} value={batch.id}>
+                        {batch.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {batchFilter && batchFilter !== "all" && batchFilter !== "none" && (
+                  <Button variant="ghost" size="icon" className="h-9 w-9" asChild>
+                    <Link href={`/campaigns/${campaignId}/batches/${batchFilter}`}>
+                      <ExternalLink className="h-4 w-4" />
+                    </Link>
+                  </Button>
+                )}
+              </div>
+            )}
+          </div>
+          <Dialog open={isAddBatchOpen} onOpenChange={setIsAddBatchOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline">
+                <Layers className="mr-2 h-4 w-4" />
+                Create Batch
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <form onSubmit={handleAddBatch}>
+                <DialogHeader>
+                  <DialogTitle>Create Batch</DialogTitle>
+                  <DialogDescription>
+                    Create a new batch to organize your leads.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="leads_batch_name">Batch Name *</Label>
+                    <Input
+                      id="leads_batch_name"
+                      placeholder="e.g., Week 1 - Tech Companies"
+                      value={newBatchName}
+                      onChange={(e) => setNewBatchName(e.target.value)}
+                      required
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setIsAddBatchOpen(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={isCreating}>
+                    {isCreating ? "Creating..." : "Create Batch"}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+        </div>
+
+        {/* Leads Companies Table */}
+        <div className="border rounded-lg">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Company</TableHead>
+                <TableHead>Description</TableHead>
+                <TableHead>Website</TableHead>
+                <TableHead>Email</TableHead>
+                <TableHead>Batch</TableHead>
+                <TableHead>People</TableHead>
+                <TableHead>AI Score</TableHead>
+                <TableHead>Classification</TableHead>
+                {/* Dynamic custom output columns */}
+                {aiConfigs.length > 0 && aiConfigs[0].custom_outputs?.map((output) => (
+                  <TableHead key={output.id}>{output.label}</TableHead>
+                ))}
+                <TableHead className="w-32">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredCompanies.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={9 + (aiConfigs[0]?.custom_outputs?.length || 0)} className="text-center py-12 text-muted-foreground">
+                    {batchFilter !== "all" 
+                      ? "No companies match your filter"
+                      : "No lead companies yet. Add your first company to get started."}
+                  </TableCell>
+                </TableRow>
+              ) : (
+                filteredCompanies.map((company) => {
+                  const people = companyContacts.get(company.id) || [];
+                  // Can push if company has email OR has people (people will have emails)
+                  const canPush = company.email || people.length > 0;
+                  return (
+                    <Fragment key={company.id}>
+                      <TableRow className="bg-slate-50 dark:bg-slate-900/50">
+                        <TableCell className="font-medium">
+                          <Link 
+                            href={`/campaigns/${campaignId}/companies/${company.id}`}
+                            className="flex items-center gap-2 hover:text-primary hover:underline"
+                          >
+                            <FileText className="h-4 w-4 text-muted-foreground" />
+                            {company.name}
+                          </Link>
+                        </TableCell>
+                        <TableCell className="max-w-xs">
+                          {company.description ? (
+                            <p className="text-sm text-muted-foreground line-clamp-2">
+                              {company.description}
+                            </p>
+                          ) : (
+                            <span className="text-muted-foreground">-</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {company.website ? (
+                            <a
+                              href={company.website}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-primary hover:underline flex items-center gap-1"
+                            >
+                              {company.website}
+                              <ExternalLink className="h-3 w-3" />
+                            </a>
+                          ) : (
+                            "-"
+                          )}
+                        </TableCell>
+                        <TableCell>{company.email || "-"}</TableCell>
+                        <TableCell>
+                          {company.expand?.batch ? (
+                            <Link
+                              href={`/campaigns/${campaignId}/batches/${company.batch}`}
+                              className="text-primary hover:underline"
+                            >
+                              {company.expand.batch.name}
+                            </Link>
+                          ) : (
+                            <span className="text-muted-foreground">-</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="secondary">{people.length}</Badge>
+                        </TableCell>
+                        <TableCell>
+                          {company.ai_score !== undefined ? (
+                            <div className="flex items-center gap-2">
+                              <Star className="h-4 w-4 text-amber-500 fill-amber-500" />
+                              <span className="font-medium">{company.ai_score}</span>
+                              {company.ai_confidence && (
+                                <span className="text-xs text-muted-foreground">
+                                  ({Math.round(company.ai_confidence * 100)}%)
+                                </span>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground text-sm">Not scored</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {company.ai_classification ? (
+                            <Badge>{company.ai_classification}</Badge>
+                          ) : (
+                            "-"
+                          )}
+                        </TableCell>
+                        {/* Dynamic custom output cells */}
+                        {aiConfigs.length > 0 && aiConfigs[0].custom_outputs?.map((output) => {
+                          const fieldName = `ai_custom_${output.name}`;
+                          const value = (company as Record<string, unknown>)[fieldName];
+                          return (
+                            <TableCell key={output.id}>
+                              {value !== undefined && value !== null ? (
+                                output.type === "boolean" ? (
+                                  <Badge variant={value === "true" ? "default" : value === "false" ? "secondary" : "outline"}>
+                                    {String(value)}
+                                  </Badge>
+                                ) : output.type === "nested_json" ? (
+                                  <div className="text-xs font-mono max-w-xs truncate">
+                                    {JSON.stringify(value)}
+                                  </div>
+                                ) : (
+                                  <span className="text-sm">{String(value)}</span>
+                                )
+                              ) : (
+                                <span className="text-muted-foreground text-sm">-</span>
+                              )}
+                            </TableCell>
+                          );
+                        })}
+                        <TableCell>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setSelectedCompanyForPerson(company.id);
+                                setIsAddPersonOpen(true);
+                              }}
+                            >
+                              <Plus className="h-3 w-3 mr-1" />
+                              Add Person
+                            </Button>
+                            {aiConfigs.length > 0 && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleScoreLead(company.id)}
+                                disabled={scoringCompanyId === company.id}
+                              >
+                                {scoringCompanyId === company.id ? (
+                                  <>
+                                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                    Running...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Sparkles className="h-3 w-3 mr-1" />
+                                    Run AI
+                                  </>
+                                )}
+                              </Button>
+                            )}
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setPushingCompanyId(company.id);
+                                setIsPushDialogOpen(true);
+                              }}
+                              disabled={!canPush || pushingCompanyId === company.id}
+                            >
+                              <ArrowRight className="h-3 w-3 mr-1" />
+                              Push
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                      {/* People under company */}
+                      {people.length > 0 && people.map((person) => (
+                        <TableRow key={person.id} className="bg-white dark:bg-slate-800">
+                          <TableCell className="pl-8">
+                            <div className="flex items-center gap-2">
+                              <Users className="h-3 w-3 text-muted-foreground" />
+                              <span className="text-sm">
+                                {person.first_name} {person.last_name}
+                              </span>
+                            </div>
+                          </TableCell>
+                          <TableCell colSpan={2}>
+                            <div className="flex items-center gap-2 text-sm">
+                              <Mail className="h-3 w-3 text-muted-foreground" />
+                              {person.email}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <span className="text-sm text-muted-foreground">{person.title || "-"}</span>
+                          </TableCell>
+                          <TableCell colSpan={3}></TableCell>
+                        </TableRow>
+                      ))}
+                    </Fragment>
+                  );
+                })
+              )}
+            </TableBody>
+          </Table>
+        </div>
+
+        {/* Push to Outreach Dialog */}
+        <Dialog open={isPushDialogOpen} onOpenChange={setIsPushDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Push Company to Outreach</DialogTitle>
+              <DialogDescription>
+                Select an outreach campaign to push this company and its people to.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="outreach_campaign">Outreach Campaign</Label>
+                <Select
+                  value={selectedOutreachCampaign}
+                  onValueChange={(value) => {
+                    setSelectedOutreachCampaign(value);
+                    setSelectedFunnelStage("");
+                    setSelectedBatch("");
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select outreach campaign..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {outreachCampaigns.length === 0 ? (
+                      <SelectItem value="__none__" disabled>
+                        No outreach campaigns available
+                      </SelectItem>
+                    ) : (
+                      outreachCampaigns.map((camp) => (
+                        <SelectItem key={camp.id} value={camp.id}>
+                          {camp.name}
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {selectedOutreachCampaign && (
+                <>
+                  {outreachCampaignFunnelStages.length > 0 && (
+                    <div className="space-y-2">
+                      <Label htmlFor="funnel_stage">Funnel Stage (Optional)</Label>
+                      <Select
+                        value={selectedFunnelStage}
+                        onValueChange={setSelectedFunnelStage}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select funnel stage..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="">None</SelectItem>
+                          {outreachCampaignFunnelStages.map((stage) => (
+                            <SelectItem key={stage.id} value={stage.id}>
+                              {stage.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+
+                  {outreachCampaignBatches.length > 0 && (
+                    <div className="space-y-2">
+                      <Label htmlFor="batch">Batch (Optional)</Label>
+                      <Select
+                        value={selectedBatch}
+                        onValueChange={setSelectedBatch}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select batch..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="">None</SelectItem>
+                          {outreachCampaignBatches.map((batch) => (
+                            <SelectItem key={batch.id} value={batch.id}>
+                              {batch.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setIsPushDialogOpen(false);
+                  setSelectedOutreachCampaign("");
+                  setSelectedFunnelStage("");
+                  setSelectedBatch("");
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={() => {
+                  if (pushingCompanyId) {
+                    handlePushToOutreach(pushingCompanyId);
+                  }
+                }}
+                disabled={!selectedOutreachCampaign || !pushingCompanyId}
+              >
+                {pushingCompanyId ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Pushing...
+                  </>
+                ) : (
+                  <>
+                    <ArrowRight className="mr-2 h-4 w-4" />
+                    Push to Outreach
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Add Person to Company Dialog */}
+        <Dialog open={isAddPersonOpen} onOpenChange={setIsAddPersonOpen}>
+          <DialogContent>
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              if (!newPerson.email.trim() || !selectedCompanyForPerson) return;
+
+              setIsCreating(true);
+              try {
+                const pb = getClientPB();
+                const currentUser = getCurrentUser(pb);
+                await createContact(pb, {
+                  email: newPerson.email,
+                  first_name: newPerson.first_name,
+                  last_name: newPerson.last_name,
+                  title: newPerson.title,
+                  company: selectedCompanyForPerson,
+                  campaign: campaignId,
+                  created_by: currentUser?.id,
+                });
+
+                toast({
+                  title: "Person added",
+                  description: "The person has been added to this company.",
+                });
+
+                setNewPerson({ email: "", first_name: "", last_name: "", title: "" });
+                setIsAddPersonOpen(false);
+                setSelectedCompanyForPerson("");
+                loadData();
+              } catch (error) {
+                console.error("Failed to add person:", error);
+                toast({
+                  title: "Error",
+                  description: "Failed to add person. Please try again.",
+                  variant: "destructive",
+                });
+              } finally {
+                setIsCreating(false);
+              }
+            }}>
+              <DialogHeader>
+                <DialogTitle>Add Person to Company</DialogTitle>
+                <DialogDescription>
+                  Add a person to this lead company.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="person_first_name">First Name</Label>
+                    <Input
+                      id="person_first_name"
+                      value={newPerson.first_name}
+                      onChange={(e) =>
+                        setNewPerson({ ...newPerson, first_name: e.target.value })
+                      }
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="person_last_name">Last Name</Label>
+                    <Input
+                      id="person_last_name"
+                      value={newPerson.last_name}
+                      onChange={(e) =>
+                        setNewPerson({ ...newPerson, last_name: e.target.value })
+                      }
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="person_email">Email *</Label>
+                  <Input
+                    id="person_email"
+                    type="email"
+                    value={newPerson.email}
+                    onChange={(e) =>
+                      setNewPerson({ ...newPerson, email: e.target.value })
+                    }
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="person_title">Title</Label>
+                  <Input
+                    id="person_title"
+                    placeholder="e.g., CEO, Marketing Manager"
+                    value={newPerson.title}
+                    onChange={(e) =>
+                      setNewPerson({ ...newPerson, title: e.target.value })
+                    }
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setIsAddPersonOpen(false);
+                    setSelectedCompanyForPerson("");
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={isCreating}>
+                  {isCreating ? "Adding..." : "Add Person"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+      </div>
+    );
+  }
+
+  // Regular outreach campaign view (existing UI)
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -427,10 +1437,6 @@ export default function CampaignPage() {
             <TabsTrigger value="contacts" className="gap-2">
               <Mail className="h-4 w-4" />
               Contacts
-            </TabsTrigger>
-            <TabsTrigger value="companies" className="gap-2">
-              <FileText className="h-4 w-4" />
-              Companies
             </TabsTrigger>
           </TabsList>
 
@@ -521,6 +1527,48 @@ export default function CampaignPage() {
                   ))}
                 </SelectContent>
               </Select>
+              {batches.length > 0 && (
+                <div className="flex items-center gap-1">
+                  <Select value={batchFilter} onValueChange={setBatchFilter}>
+                    <SelectTrigger className="w-[200px]">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Layers className="h-4 w-4 flex-shrink-0" />
+                        {(() => {
+                          if (batchFilter === "all") {
+                            return <span className="truncate">All Batches</span>;
+                          }
+                          if (batchFilter === "none") {
+                            return <span className="truncate">No Batch</span>;
+                          }
+                          const batch = batches.find(b => b.id === batchFilter);
+                          if (batch) {
+                            return <span className="truncate">{batch.name}</span>;
+                          }
+                          return <span className="truncate">Filter by batch</span>;
+                        })()}
+                      </div>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Batches</SelectItem>
+                      <SelectItem value="none">No Batch</SelectItem>
+                      {batches.map((batch) => (
+                        <SelectItem key={batch.id} value={batch.id}>
+                          <span className="flex items-center justify-between w-full">
+                            {batch.name}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {batchFilter && batchFilter !== "all" && batchFilter !== "none" && (
+                    <Button variant="ghost" size="icon" className="h-9 w-9" asChild>
+                      <Link href={`/campaigns/${campaignId}/batches/${batchFilter}`}>
+                        <ExternalLink className="h-4 w-4" />
+                      </Link>
+                    </Button>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="flex items-center gap-2">
@@ -532,6 +1580,48 @@ export default function CampaignPage() {
                   </Link>
                 </Button>
               )}
+              <Dialog open={isAddBatchOpen} onOpenChange={setIsAddBatchOpen}>
+                <DialogTrigger asChild>
+                  <Button variant="outline">
+                    <Layers className="mr-2 h-4 w-4" />
+                    Create Batch
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <form onSubmit={handleAddBatch}>
+                    <DialogHeader>
+                      <DialogTitle>Create Batch</DialogTitle>
+                      <DialogDescription>
+                        Create a new batch to organize your contacts.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 py-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="batch_name">Batch Name *</Label>
+                        <Input
+                          id="batch_name"
+                          placeholder="e.g., Day 1 - January 2026"
+                          value={newBatchName}
+                          onChange={(e) => setNewBatchName(e.target.value)}
+                          required
+                        />
+                      </div>
+                    </div>
+                    <DialogFooter>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => setIsAddBatchOpen(false)}
+                      >
+                        Cancel
+                      </Button>
+                      <Button type="submit" disabled={isCreating}>
+                        {isCreating ? "Creating..." : "Create Batch"}
+                      </Button>
+                    </DialogFooter>
+                  </form>
+                </DialogContent>
+              </Dialog>
               <Dialog open={isAddContactOpen} onOpenChange={setIsAddContactOpen}>
                 <DialogTrigger asChild>
                   <Button>
@@ -746,6 +1836,9 @@ export default function CampaignPage() {
                   <TableHead>Company</TableHead>
                   <TableHead>Batch</TableHead>
                   <TableHead>Funnel Stage</TableHead>
+                  {(campaign?.kind === 'outreach' || !campaign?.kind) && (
+                    <TableHead>AI Opener</TableHead>
+                  )}
                   <TableHead>Created By</TableHead>
                   {customFields.map((field) => (
                     <TableHead key={field.id}>{field.name}</TableHead>
@@ -757,7 +1850,7 @@ export default function CampaignPage() {
                 {filteredContacts.length === 0 ? (
                   <TableRow>
                     <TableCell
-                      colSpan={9 + customFields.length}
+                      colSpan={9 + (campaign?.kind === 'outreach' || !campaign?.kind ? 1 : 0) + customFields.length}
                       className="text-center py-8 text-muted-foreground"
                     >
                       {searchQuery || stageFilter !== "all"
@@ -777,12 +1870,136 @@ export default function CampaignPage() {
                         />
                       </TableCell>
                       <TableCell className="font-medium">
-                        {contact.first_name} {contact.last_name}
+                        {editingContactId === contact.id ? (
+                          <div className="flex items-center gap-2">
+                            <Input
+                              value={editingContact.first_name || ""}
+                              onChange={(e) =>
+                                setEditingContact({ ...editingContact, first_name: e.target.value })
+                              }
+                              className="h-8 w-24"
+                              placeholder="First"
+                            />
+                            <Input
+                              value={editingContact.last_name || ""}
+                              onChange={(e) =>
+                                setEditingContact({ ...editingContact, last_name: e.target.value })
+                              }
+                              className="h-8 w-24"
+                              placeholder="Last"
+                            />
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={async () => {
+                                try {
+                                  const pb = getClientPB();
+                                  await updateContact(pb, contact.id, editingContact);
+                                  toast({
+                                    title: "Contact updated",
+                                    description: "Contact has been updated.",
+                                  });
+                                  setEditingContactId(null);
+                                  setEditingContact({});
+                                  loadData();
+                                } catch (error) {
+                                  console.error("Failed to update contact:", error);
+                                  toast({
+                                    title: "Error",
+                                    description: "Failed to update contact.",
+                                    variant: "destructive",
+                                  });
+                                }
+                              }}
+                            >
+                              Save
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => {
+                                setEditingContactId(null);
+                                setEditingContact({});
+                              }}
+                            >
+                              Cancel
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            {contact.first_name} {contact.last_name}
+                            {campaign?.kind === 'outreach' || !campaign?.kind ? (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => {
+                                  setEditingContactId(contact.id);
+                                  setEditingContact({
+                                    first_name: contact.first_name,
+                                    last_name: contact.last_name,
+                                    email: contact.email,
+                                    title: contact.title,
+                                  });
+                                }}
+                              >
+                                <Edit className="h-3 w-3" />
+                              </Button>
+                            ) : null}
+                          </div>
+                        )}
                       </TableCell>
-                      <TableCell>{contact.email}</TableCell>
-                      <TableCell>{contact.title || "-"}</TableCell>
                       <TableCell>
-                        {contact.expand?.company?.name || "-"}
+                        {editingContactId === contact.id ? (
+                          <Input
+                            value={editingContact.email || ""}
+                            onChange={(e) =>
+                              setEditingContact({ ...editingContact, email: e.target.value })
+                            }
+                            className="h-8"
+                            type="email"
+                          />
+                        ) : (
+                          contact.email
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {editingContactId === contact.id ? (
+                          <Input
+                            value={editingContact.title || ""}
+                            onChange={(e) =>
+                              setEditingContact({ ...editingContact, title: e.target.value })
+                            }
+                            className="h-8"
+                            placeholder="Title"
+                          />
+                        ) : (
+                          contact.title || "-"
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {(() => {
+                          // For outreach campaigns, show source company (from leads)
+                          if (campaign?.kind === 'outreach' || !campaign?.kind) {
+                            if (contact.source_company) {
+                              const sourceCompany = sourceCompanies.get(contact.source_company);
+                              if (sourceCompany) {
+                                // Find the lead campaign this company belongs to
+                                const leadCampaignId = sourceCompany.campaign;
+                                return (
+                                  <Link
+                                    href={`/campaigns/${leadCampaignId}/companies/${sourceCompany.id}`}
+                                    className="text-primary hover:underline"
+                                  >
+                                    {sourceCompany.name}
+                                  </Link>
+                                );
+                              }
+                            }
+                            return "-";
+                          }
+                          // For leads campaigns, show regular company
+                          return contact.expand?.company?.name || "-";
+                        })()}
                       </TableCell>
                       <TableCell>
                         {contact.expand?.batch ? (
@@ -840,6 +2057,53 @@ export default function CampaignPage() {
                           </SelectContent>
                         </Select>
                       </TableCell>
+                      {(campaign?.kind === 'outreach' || !campaign?.kind) && (
+                        <TableCell>
+                          {contact.ai_opener ? (
+                            <div className="max-w-xs">
+                              <p className="text-sm line-clamp-2">{contact.ai_opener}</p>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="mt-1 h-6 text-xs"
+                                onClick={() => handleGenerateOpener(contact.id)}
+                                disabled={generatingOpenerId === contact.id}
+                              >
+                                {generatingOpenerId === contact.id ? (
+                                  <>
+                                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                    Generating...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Sparkles className="h-3 w-3 mr-1" />
+                                    Regenerate
+                                  </>
+                                )}
+                              </Button>
+                            </div>
+                          ) : (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleGenerateOpener(contact.id)}
+                              disabled={generatingOpenerId === contact.id}
+                            >
+                              {generatingOpenerId === contact.id ? (
+                                <>
+                                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                  Generating...
+                                </>
+                              ) : (
+                                <>
+                                  <Sparkles className="h-3 w-3 mr-1" />
+                                  Generate AI Opener
+                                </>
+                              )}
+                            </Button>
+                          )}
+                        </TableCell>
+                      )}
                       <TableCell>
                         {contact.expand?.created_by?.name || contact.expand?.created_by?.email || "-"}
                       </TableCell>
@@ -899,183 +2163,6 @@ export default function CampaignPage() {
           </div>
         </TabsContent>
 
-        {/* Companies Tab */}
-        <TabsContent value="companies" className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="relative flex-1 max-w-sm">
-              <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="Search companies..." className="pl-10" />
-            </div>
-            <Dialog open={isAddCompanyOpen} onOpenChange={setIsAddCompanyOpen}>
-              <DialogTrigger asChild>
-                <Button>
-                  <Plus className="mr-2 h-4 w-4" />
-                  Add Company
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <form onSubmit={handleAddCompany}>
-                  <DialogHeader>
-                    <DialogTitle>Add Company</DialogTitle>
-                    <DialogDescription>
-                      Add a new company to this campaign.
-                    </DialogDescription>
-                  </DialogHeader>
-                  <div className="space-y-4 py-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="company_name">Company Name *</Label>
-                      <Input
-                        id="company_name"
-                        value={newCompany.name}
-                        onChange={(e) =>
-                          setNewCompany({ ...newCompany, name: e.target.value })
-                        }
-                        required
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="website">Website</Label>
-                      <Input
-                        id="website"
-                        type="url"
-                        placeholder="https://example.com"
-                        value={newCompany.website}
-                        onChange={(e) =>
-                          setNewCompany({ ...newCompany, website: e.target.value })
-                        }
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="industry">Industry</Label>
-                      {campaign?.industry_type === "dropdown" && campaign.industry_options?.length > 0 ? (
-                        <Select
-                          value={newCompany.industry}
-                          onValueChange={(value) =>
-                            setNewCompany({ ...newCompany, industry: value })
-                          }
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select an industry" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {campaign.industry_options.map((option) => (
-                              <SelectItem key={option} value={option}>
-                                {option}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      ) : (
-                        <Input
-                          id="industry"
-                          placeholder="e.g., Technology, Finance"
-                          value={newCompany.industry}
-                          onChange={(e) =>
-                            setNewCompany({ ...newCompany, industry: e.target.value })
-                          }
-                        />
-                      )}
-                    </div>
-                  </div>
-                  <DialogFooter>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => setIsAddCompanyOpen(false)}
-                    >
-                      Cancel
-                    </Button>
-                    <Button type="submit" loading={isCreating}>
-                      Add Company
-                    </Button>
-                  </DialogFooter>
-                </form>
-              </DialogContent>
-            </Dialog>
-          </div>
-
-          <div className="border rounded-lg">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Company Name</TableHead>
-                  <TableHead>Website</TableHead>
-                  <TableHead>Industry</TableHead>
-                  <TableHead>Contacts</TableHead>
-                  <TableHead>Created By</TableHead>
-                  <TableHead className="w-12"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {companies.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                      No companies yet. Add your first company.
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  companies.map((company) => {
-                    const companyContacts = contacts.filter((c) => c.company === company.id);
-                    return (
-                      <TableRow key={company.id}>
-                        <TableCell className="font-medium">
-                          <Link 
-                            href={`/campaigns/${campaignId}/companies/${company.id}`}
-                            className="text-primary hover:underline"
-                          >
-                            {company.name}
-                          </Link>
-                        </TableCell>
-                        <TableCell>
-                          {company.website ? (
-                            <a
-                              href={company.website}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-primary hover:underline"
-                            >
-                              {company.website}
-                            </a>
-                          ) : (
-                            "-"
-                          )}
-                        </TableCell>
-                        <TableCell>{company.industry || "-"}</TableCell>
-                        <TableCell>
-                          <Badge variant="secondary">{companyContacts.length}</Badge>
-                        </TableCell>
-                        <TableCell>
-                          {company.expand?.created_by?.name || company.expand?.created_by?.email || "-"}
-                        </TableCell>
-                        <TableCell>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon" className="h-8 w-8">
-                                <MoreVertical className="h-4 w-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem asChild>
-                                <Link href={`/campaigns/${campaignId}/companies/${company.id}`}>
-                                  <Edit className="mr-2 h-4 w-4" />
-                                  View Details
-                                </Link>
-                              </DropdownMenuItem>
-                              <DropdownMenuItem className="text-red-600">
-                                <Trash2 className="mr-2 h-4 w-4" />
-                                Delete
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })
-                )}
-              </TableBody>
-            </Table>
-          </div>
-        </TabsContent>
       </Tabs>
     </div>
   );

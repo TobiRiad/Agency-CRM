@@ -99,6 +99,9 @@ export default function TemplatesPage() {
     company_name: "Acme Inc",
     company_website: "https://acme.com",
     company_industry: "Technology",
+    ...(campaign?.kind === 'outreach' || !campaign?.kind ? {
+      ai_opener: "I noticed your company's innovative approach to [industry] caught my attention...",
+    } : {}),
   };
 
   // Add custom field sample data
@@ -319,6 +322,9 @@ export default function TemplatesPage() {
       { key: "last_name", label: "Last Name" },
       { key: "email", label: "Email" },
       { key: "title", label: "Title" },
+      ...(campaign?.kind === 'outreach' || !campaign?.kind ? [
+        { key: "ai_opener", label: "AI Opener" },
+      ] : []),
     ],
     company: [
       { key: "company_name", label: "Company Name" },

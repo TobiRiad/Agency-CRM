@@ -139,7 +139,8 @@ export async function POST(request: NextRequest) {
 
     // Record the email send in PocketBase
     try {
-      const pb = getServerPB();
+      // Use admin PB because email_sends rules require auth and this is a server route.
+      const pb = await getServerAdminPB();
       await createEmailSend(pb, {
         contact: contactId,
         template: templateId,

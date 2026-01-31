@@ -24,13 +24,16 @@ export interface AppSetting extends BaseRecord {
 }
 
 export type IndustryType = 'text' | 'dropdown';
+export type CampaignKind = 'leads' | 'outreach';
 
 export interface Campaign extends BaseRecord {
   user: string;
   name: string;
   description: string;
+  kind?: CampaignKind; // 'leads' or 'outreach'
   industry_type: IndustryType;
   industry_options: string[]; // For dropdown type
+  ai_opener_prompt?: string; // System prompt for generating AI openers (outreach campaigns)
   // Expanded relations
   expand?: {
     user?: User;
@@ -42,11 +45,26 @@ export interface Company extends BaseRecord {
   name: string;
   website: string;
   industry: string;
+  email?: string; // For lead companies
+  description?: string; // For lead companies
+  batch?: string; // For organizing lead companies into batches
   created_by?: string;
+  // AI scoring fields (for lead companies)
+  ai_score?: number;
+  ai_classification?: string;
+  ai_confidence?: number;
+  ai_reasons?: string[];
+  ai_scored_at?: string;
+  ai_config_version?: string;
+  ai_data?: Record<string, unknown>; // Full AI response JSON
+  // Custom output fields (dynamically added based on AI config)
+  [key: `ai_custom_${string}`]: unknown; // e.g., ai_custom_industry_fit, ai_custom_tags, etc.
   // Expanded relations
   expand?: {
     campaign?: Campaign;
+    batch?: Batch;
     created_by?: User;
+    contacts_via_company?: Contact[]; // People under this company (for leads)
   };
 }
 
@@ -68,12 +86,18 @@ export interface Contact extends BaseRecord {
   last_name: string;
   title: string;
   created_by?: string;
+  // Source tracking (for contacts pushed from leads to outreach)
+  source_company?: string; // Lead company this came from
+  source_contact?: string; // Lead contact this came from
+  ai_opener?: string; // AI-generated opener (for outreach campaigns)
   // Expanded relations
   expand?: {
     company?: Company;
     campaign?: Campaign;
     batch?: Batch;
     created_by?: User;
+    source_company?: Company;
+    source_contact?: Contact;
     contact_field_values_via_contact?: ContactFieldValue[];
   };
 }
@@ -188,6 +212,43 @@ export interface FollowUpStep extends BaseRecord {
   expand?: {
     sequence?: FollowUpSequence;
     template_group?: EmailTemplateGroup;
+  };
+}
+
+export type CustomOutputType = 'text' | 'number' | 'boolean' | 'list' | 'nested_json';
+
+export interface CustomOutputField {
+  id: string; // Unique ID for this custom output
+  name: string; // Field name (e.g., "industry_fit")
+  label: string; // Display label
+  description: string; // Description for AI on what to return
+  type: CustomOutputType;
+  // For 'list' type
+  list_options?: string[]; // Options to choose from
+  list_description?: string; // How to pick from the list
+  // For 'nested_json' type
+  nested_json_max_pairs?: number; // Max key-value pairs
+  nested_json_description?: string; // What the JSON should contain
+  // For 'boolean' type
+  boolean_options?: ('true' | 'false' | 'unknown')[]; // Default: ['true', 'false', 'unknown']
+}
+
+export interface AIScoringConfig extends BaseRecord {
+  campaign: string;
+  name: string;
+  system_prompt: string;
+  enable_score: boolean;
+  score_min?: number;
+  score_max?: number;
+  enable_classification: boolean;
+  classification_label?: string;
+  classification_options?: string[];
+  custom_outputs?: CustomOutputField[]; // Custom output fields
+  model?: string;
+  temperature?: number;
+  // Expanded relations
+  expand?: {
+    campaign?: Campaign;
   };
 }
 

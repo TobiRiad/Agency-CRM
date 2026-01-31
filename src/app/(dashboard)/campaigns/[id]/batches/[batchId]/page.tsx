@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, Fragment } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -8,6 +8,7 @@ import {
   getCampaign,
   getBatch,
   getContactsByBatch,
+  getCompaniesByBatch,
   getCompanies,
   getCustomFields,
   getFieldValuesForContacts,
@@ -18,10 +19,13 @@ import {
   getContactStages,
   setContactStage,
   getCurrentUser,
+  getContactsByCompany,
+  getAIScoringConfigs,
 } from "@/lib/pocketbase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -65,8 +69,15 @@ import {
   Send,
   ArrowLeft,
   ChevronRight,
+  FileText,
+  Users,
+  Mail,
+  ExternalLink,
+  Star,
+  Sparkles,
+  Loader2,
 } from "lucide-react";
-import type { Campaign, Contact, Company, CustomField, ContactFieldValue, FunnelStage, ContactStage, Batch } from "@/types";
+import type { Campaign, Contact, Company, CustomField, ContactFieldValue, FunnelStage, ContactStage, Batch, AIScoringConfig } from "@/types";
 
 export default function BatchDetailPage() {
   const params = useParams();
@@ -77,6 +88,7 @@ export default function BatchDetailPage() {
   const [batch, setBatch] = useState<Batch | null>(null);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
+  const [allCompanies, setAllCompanies] = useState<Company[]>([]);
   const [customFields, setCustomFields] = useState<CustomField[]>([]);
   const [fieldValues, setFieldValues] = useState<Map<string, Map<string, string>>>(new Map());
   const [funnelStages, setFunnelStages] = useState<FunnelStage[]>([]);
@@ -86,7 +98,13 @@ export default function BatchDetailPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [stageFilter, setStageFilter] = useState<string>("all");
   const [isAddContactOpen, setIsAddContactOpen] = useState(false);
+  const [isAddCompanyOpen, setIsAddCompanyOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+
+  // For leads campaigns
+  const [companyContacts, setCompanyContacts] = useState<Map<string, Contact[]>>(new Map());
+  const [aiConfigs, setAiConfigs] = useState<AIScoringConfig[]>([]);
+  const [scoringCompanyId, setScoringCompanyId] = useState<string | null>(null);
 
   const [newContact, setNewContact] = useState({
     email: "",
@@ -94,6 +112,14 @@ export default function BatchDetailPage() {
     last_name: "",
     title: "",
     company: "",
+  });
+
+  const [newCompany, setNewCompany] = useState({
+    name: "",
+    website: "",
+    industry: "",
+    email: "",
+    description: "",
   });
 
   // State for inline company creation during contact creation
@@ -107,44 +133,70 @@ export default function BatchDetailPage() {
   const loadData = useCallback(async () => {
     try {
       const pb = getClientPB();
-      const [campaignData, batchData, contactsData, companiesData, fieldsData, stagesData, contactStagesData] = await Promise.all([
+      const [campaignData, batchData] = await Promise.all([
         getCampaign(pb, campaignId),
         getBatch(pb, batchId),
-        getContactsByBatch(pb, batchId),
-        getCompanies(pb, campaignId),
-        getCustomFields(pb, campaignId),
-        getFunnelStages(pb, campaignId),
-        getContactStages(pb, campaignId),
       ]);
 
       setCampaign(campaignData);
       setBatch(batchData);
-      setContacts(contactsData);
-      setCompanies(companiesData);
-      setCustomFields(fieldsData);
-      setFunnelStages(stagesData.sort((a, b) => a.order - b.order));
 
-      // Create contact -> stage mapping
-      const stageMap = new Map<string, string>();
-      contactStagesData.forEach((cs: ContactStage) => {
-        stageMap.set(cs.contact, cs.stage);
-      });
-      setContactStageMap(stageMap);
+      if (campaignData.kind === 'leads') {
+        // Leads campaign: load companies in this batch
+        const [companiesData, allCompaniesData, configs] = await Promise.all([
+          getCompaniesByBatch(pb, batchId),
+          getCompanies(pb, campaignId),
+          getAIScoringConfigs(pb, campaignId),
+        ]);
+        
+        setCompanies(companiesData);
+        setAllCompanies(allCompaniesData);
+        setAiConfigs(configs);
 
-      // Load field values for all contacts
-      if (contactsData.length > 0) {
-        const contactIds = contactsData.map((c) => c.id);
-        const values = await getFieldValuesForContacts(pb, contactIds);
+        // Load contacts for each company
+        const contactsByCompany = new Map<string, Contact[]>();
+        for (const company of companiesData) {
+          const companyPeople = await getContactsByCompany(pb, company.id);
+          contactsByCompany.set(company.id, companyPeople);
+        }
+        setCompanyContacts(contactsByCompany);
+      } else {
+        // Outreach campaign: load contacts in this batch
+        const [contactsData, companiesData, fieldsData, stagesData, contactStagesData] = await Promise.all([
+          getContactsByBatch(pb, batchId),
+          getCompanies(pb, campaignId),
+          getCustomFields(pb, campaignId),
+          getFunnelStages(pb, campaignId),
+          getContactStages(pb, campaignId),
+        ]);
 
-        // Organize field values by contact -> field -> value
-        const valueMap = new Map<string, Map<string, string>>();
-        values.forEach((v: ContactFieldValue) => {
-          if (!valueMap.has(v.contact)) {
-            valueMap.set(v.contact, new Map());
-          }
-          valueMap.get(v.contact)!.set(v.custom_field, v.value);
+        setContacts(contactsData);
+        setAllCompanies(companiesData);
+        setCustomFields(fieldsData);
+        setFunnelStages(stagesData.sort((a, b) => a.order - b.order));
+
+        // Create contact -> stage mapping
+        const stageMap = new Map<string, string>();
+        contactStagesData.forEach((cs: ContactStage) => {
+          stageMap.set(cs.contact, cs.stage);
         });
-        setFieldValues(valueMap);
+        setContactStageMap(stageMap);
+
+        // Load field values for all contacts
+        if (contactsData.length > 0) {
+          const contactIds = contactsData.map((c) => c.id);
+          const values = await getFieldValuesForContacts(pb, contactIds);
+
+          // Organize field values by contact -> field -> value
+          const valueMap = new Map<string, Map<string, string>>();
+          values.forEach((v: ContactFieldValue) => {
+            if (!valueMap.has(v.contact)) {
+              valueMap.set(v.contact, new Map());
+            }
+            valueMap.get(v.contact)!.set(v.custom_field, v.value);
+          });
+          setFieldValues(valueMap);
+        }
       }
     } catch (error) {
       console.error("Failed to load batch data:", error);
@@ -162,6 +214,7 @@ export default function BatchDetailPage() {
     loadData();
   }, [loadData]);
 
+  // Outreach: Add contact handler
   const handleAddContact = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newContact.email.trim()) return;
@@ -221,6 +274,53 @@ export default function BatchDetailPage() {
       toast({
         title: "Error",
         description: "Failed to add contact. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  // Leads: Add company handler
+  const handleAddCompany = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCompany.name.trim()) return;
+
+    setIsCreating(true);
+    try {
+      const pb = getClientPB();
+      const currentUser = getCurrentUser(pb);
+      await createCompany(pb, {
+        name: newCompany.name,
+        website: newCompany.website,
+        industry: newCompany.industry,
+        email: newCompany.email || undefined,
+        description: newCompany.description || undefined,
+        batch: batchId, // Auto-assign to this batch
+        campaign: campaignId,
+        created_by: currentUser?.id,
+      });
+
+      toast({
+        title: "Company added",
+        description: "The company has been added to this batch.",
+        variant: "success",
+      });
+
+      setNewCompany({
+        name: "",
+        website: "",
+        industry: "",
+        email: "",
+        description: "",
+      });
+      setIsAddCompanyOpen(false);
+      loadData();
+    } catch (error) {
+      console.error("Failed to add company:", error);
+      toast({
+        title: "Error",
+        description: "Failed to add company. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -300,6 +400,51 @@ export default function BatchDetailPage() {
     }
   };
 
+  const handleScoreLead = async (companyId: string) => {
+    if (aiConfigs.length === 0) {
+      toast({
+        title: "No AI Config",
+        description: "Please set up an AI scoring config in campaign settings first.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setScoringCompanyId(companyId);
+    try {
+      const config = aiConfigs[0];
+      const response = await fetch("/api/ai/score-lead", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          companyId,
+          configId: config.id,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        toast({
+          title: "Lead Scored",
+          description: `Score: ${result.result.score || "N/A"}, Classification: ${result.result.classification || "N/A"}`,
+        });
+        loadData();
+      } else {
+        throw new Error(result.error || "Failed to score lead");
+      }
+    } catch (error) {
+      console.error("Failed to score lead:", error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to score lead",
+        variant: "destructive",
+      });
+    } finally {
+      setScoringCompanyId(null);
+    }
+  };
+
   const getContactStageId = (contactId: string): string | undefined => {
     return contactStageMap.get(contactId);
   };
@@ -320,6 +465,17 @@ export default function BatchDetailPage() {
       contact.last_name?.toLowerCase().includes(query) ||
       contact.title?.toLowerCase().includes(query) ||
       contact.expand?.company?.name.toLowerCase().includes(query)
+    );
+  });
+
+  const filteredCompanies = companies.filter((company) => {
+    if (!searchQuery) return true;
+    const query = searchQuery.toLowerCase();
+    return (
+      company.name.toLowerCase().includes(query) ||
+      company.email?.toLowerCase().includes(query) ||
+      company.website?.toLowerCase().includes(query) ||
+      company.industry?.toLowerCase().includes(query)
     );
   });
 
@@ -347,6 +503,333 @@ export default function BatchDetailPage() {
     );
   }
 
+  // LEADS CAMPAIGN VIEW
+  if (campaign.kind === 'leads') {
+    return (
+      <div className="space-y-6">
+        {/* Breadcrumb & Header */}
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Link href={`/campaigns/${campaignId}`} className="hover:text-foreground">
+              {campaign.name}
+            </Link>
+            <ChevronRight className="h-4 w-4" />
+            <span className="text-foreground font-medium">{batch.name}</span>
+          </div>
+
+          <div className="flex items-center gap-4">
+            <Button variant="ghost" size="icon" asChild>
+              <Link href={`/campaigns/${campaignId}`}>
+                <ArrowLeft className="h-4 w-4" />
+              </Link>
+            </Button>
+            <div className="flex-1">
+              <h1 className="text-2xl font-bold">{batch.name}</h1>
+              <p className="text-muted-foreground">
+                {companies.length} companies in this batch
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Toolbar */}
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-2 flex-1">
+            <div className="relative flex-1 max-w-sm">
+              <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search companies..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10"
+              />
+            </div>
+          </div>
+
+          <Dialog open={isAddCompanyOpen} onOpenChange={setIsAddCompanyOpen}>
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="mr-2 h-4 w-4" />
+                Add Company
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-2xl">
+              <form onSubmit={handleAddCompany}>
+                <DialogHeader>
+                  <DialogTitle>Add Company to {batch.name}</DialogTitle>
+                  <DialogDescription>
+                    Add a new lead company to this batch.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="company_name">Company Name *</Label>
+                    <Input
+                      id="company_name"
+                      value={newCompany.name}
+                      onChange={(e) =>
+                        setNewCompany({ ...newCompany, name: e.target.value })
+                      }
+                      required
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="website">Website</Label>
+                      <Input
+                        id="website"
+                        type="url"
+                        placeholder="https://example.com"
+                        value={newCompany.website}
+                        onChange={(e) =>
+                          setNewCompany({ ...newCompany, website: e.target.value })
+                        }
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="email">Company Email</Label>
+                      <Input
+                        id="email"
+                        type="email"
+                        placeholder="sales@company.com"
+                        value={newCompany.email}
+                        onChange={(e) =>
+                          setNewCompany({ ...newCompany, email: e.target.value })
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="description">Description</Label>
+                    <Textarea
+                      id="description"
+                      placeholder="Brief description of the company..."
+                      value={newCompany.description}
+                      onChange={(e) =>
+                        setNewCompany({ ...newCompany, description: e.target.value })
+                      }
+                      rows={3}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="industry">Industry</Label>
+                    {campaign?.industry_type === "dropdown" && campaign.industry_options?.length > 0 ? (
+                      <Select
+                        value={newCompany.industry}
+                        onValueChange={(value) =>
+                          setNewCompany({ ...newCompany, industry: value })
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select an industry" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {campaign.industry_options.map((option) => (
+                            <SelectItem key={option} value={option}>
+                              {option}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <Input
+                        id="industry"
+                        placeholder="e.g., SaaS, Agency"
+                        value={newCompany.industry}
+                        onChange={(e) =>
+                          setNewCompany({ ...newCompany, industry: e.target.value })
+                        }
+                      />
+                    )}
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setIsAddCompanyOpen(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={isCreating}>
+                    {isCreating ? "Adding..." : "Add Company"}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+        </div>
+
+        {/* Companies Table */}
+        <div className="border rounded-lg">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Company</TableHead>
+                <TableHead>Website</TableHead>
+                <TableHead>Email</TableHead>
+                <TableHead>People</TableHead>
+                <TableHead>AI Score</TableHead>
+                <TableHead>Classification</TableHead>
+                {aiConfigs.length > 0 && aiConfigs[0].custom_outputs?.map((output) => (
+                  <TableHead key={output.id}>{output.label}</TableHead>
+                ))}
+                <TableHead className="w-32">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredCompanies.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={7 + (aiConfigs[0]?.custom_outputs?.length || 0)} className="text-center py-12 text-muted-foreground">
+                    {searchQuery
+                      ? "No companies match your search"
+                      : "No companies in this batch yet. Add your first company."}
+                  </TableCell>
+                </TableRow>
+              ) : (
+                filteredCompanies.map((company) => {
+                  const people = companyContacts.get(company.id) || [];
+                  return (
+                    <Fragment key={company.id}>
+                      <TableRow className="bg-slate-50 dark:bg-slate-900/50">
+                        <TableCell className="font-medium">
+                          <Link 
+                            href={`/campaigns/${campaignId}/companies/${company.id}`}
+                            className="flex items-center gap-2 hover:text-primary hover:underline"
+                          >
+                            <FileText className="h-4 w-4 text-muted-foreground" />
+                            {company.name}
+                          </Link>
+                          {company.description && (
+                            <p className="text-xs text-muted-foreground mt-1 line-clamp-1">
+                              {company.description}
+                            </p>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {company.website ? (
+                            <a
+                              href={company.website}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-primary hover:underline flex items-center gap-1"
+                            >
+                              {company.website}
+                              <ExternalLink className="h-3 w-3" />
+                            </a>
+                          ) : (
+                            "-"
+                          )}
+                        </TableCell>
+                        <TableCell>{company.email || "-"}</TableCell>
+                        <TableCell>
+                          <Badge variant="secondary">{people.length}</Badge>
+                        </TableCell>
+                        <TableCell>
+                          {company.ai_score !== undefined ? (
+                            <div className="flex items-center gap-2">
+                              <Star className="h-4 w-4 text-amber-500 fill-amber-500" />
+                              <span className="font-medium">{company.ai_score}</span>
+                              {company.ai_confidence && (
+                                <span className="text-xs text-muted-foreground">
+                                  ({Math.round(company.ai_confidence * 100)}%)
+                                </span>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground text-sm">Not scored</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {company.ai_classification ? (
+                            <Badge>{company.ai_classification}</Badge>
+                          ) : (
+                            "-"
+                          )}
+                        </TableCell>
+                        {aiConfigs.length > 0 && aiConfigs[0].custom_outputs?.map((output) => {
+                          const fieldName = `ai_custom_${output.name}`;
+                          const value = (company as Record<string, unknown>)[fieldName];
+                          return (
+                            <TableCell key={output.id}>
+                              {value !== undefined && value !== null ? (
+                                output.type === "boolean" ? (
+                                  <Badge variant={value === "true" ? "default" : value === "false" ? "secondary" : "outline"}>
+                                    {String(value)}
+                                  </Badge>
+                                ) : (
+                                  <span className="text-sm">{String(value)}</span>
+                                )
+                              ) : (
+                                <span className="text-muted-foreground text-sm">-</span>
+                              )}
+                            </TableCell>
+                          );
+                        })}
+                        <TableCell>
+                          <div className="flex items-center gap-1">
+                            {aiConfigs.length > 0 && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleScoreLead(company.id)}
+                                disabled={scoringCompanyId === company.id}
+                              >
+                                {scoringCompanyId === company.id ? (
+                                  <>
+                                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                    Running...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Sparkles className="h-3 w-3 mr-1" />
+                                    Run AI
+                                  </>
+                                )}
+                              </Button>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                      {/* People under company */}
+                      {people.length > 0 && people.map((person) => (
+                        <TableRow key={person.id} className="bg-white dark:bg-slate-800">
+                          <TableCell className="pl-8">
+                            <div className="flex items-center gap-2">
+                              <Users className="h-3 w-3 text-muted-foreground" />
+                              <span className="text-sm">
+                                {person.first_name} {person.last_name}
+                              </span>
+                            </div>
+                          </TableCell>
+                          <TableCell colSpan={2}>
+                            <div className="flex items-center gap-2 text-sm">
+                              <Mail className="h-3 w-3 text-muted-foreground" />
+                              {person.email}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <span className="text-sm text-muted-foreground">{person.title || "-"}</span>
+                          </TableCell>
+                          <TableCell colSpan={3 + (aiConfigs[0]?.custom_outputs?.length || 0)}></TableCell>
+                        </TableRow>
+                      ))}
+                    </Fragment>
+                  );
+                })
+              )}
+            </TableBody>
+          </Table>
+        </div>
+
+        <div className="text-sm text-muted-foreground">
+          Showing {filteredCompanies.length} of {companies.length} companies
+        </div>
+      </div>
+    );
+  }
+
+  // OUTREACH CAMPAIGN VIEW (contacts)
   return (
     <div className="space-y-6">
       {/* Breadcrumb & Header */}
@@ -524,7 +1007,7 @@ export default function BatchDetailPage() {
                                 Create new company
                               </span>
                             </SelectItem>
-                            {companies.map((company) => (
+                            {allCompanies.map((company) => (
                               <SelectItem key={company.id} value={company.id}>
                                 {company.name}
                               </SelectItem>
@@ -601,8 +1084,8 @@ export default function BatchDetailPage() {
                   >
                     Cancel
                   </Button>
-                  <Button type="submit" loading={isCreating}>
-                    Add Contact
+                  <Button type="submit" disabled={isCreating}>
+                    {isCreating ? "Adding..." : "Add Contact"}
                   </Button>
                 </DialogFooter>
               </form>

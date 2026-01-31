@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { useParams, useSearchParams, useRouter } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   getClientPB,
@@ -13,6 +13,7 @@ import {
   getFieldValuesForContacts,
   getFunnelStages,
   getContactStages,
+  getBatches,
 } from "@/lib/pocketbase";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -49,7 +50,7 @@ import {
   Check,
   AlertCircle,
   Mail,
-  Users,
+  Layers,
 } from "lucide-react";
 import type {
   Campaign,
@@ -62,6 +63,7 @@ import type {
   ContactStage,
   EmailProvider,
   AppSetting,
+  Batch,
 } from "@/types";
 import { interpolateTemplate } from "@/lib/utils";
 
@@ -70,9 +72,8 @@ type SendStep = "select" | "sending" | "complete";
 export default function SendEmailPage() {
   const params = useParams();
   const searchParams = useSearchParams();
-  const router = useRouter();
   const campaignId = params.id as string;
-  const preselectedContacts = searchParams.get("contacts")?.split(",") || [];
+  const preselectedContacts = searchParams.get("contacts")?.split(",").filter(Boolean) || [];
 
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -82,6 +83,7 @@ export default function SendEmailPage() {
   const [fieldValues, setFieldValues] = useState<Map<string, Map<string, string>>>(new Map());
   const [funnelStages, setFunnelStages] = useState<FunnelStage[]>([]);
   const [contactStageMap, setContactStageMap] = useState<Map<string, string>>(new Map());
+  const [batches, setBatches] = useState<Batch[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   // Selection state
@@ -108,17 +110,26 @@ export default function SendEmailPage() {
   const loadData = useCallback(async () => {
     try {
       const pb = getClientPB();
-      const [campaignData, contactsData, groupsData, fieldsData, stagesData, contactStagesData] = await Promise.all([
+      const [campaignData, contactsData, groupsData, fieldsData, stagesData, contactStagesData, batchesData] = await Promise.all([
         getCampaign(pb, campaignId),
         getContacts(pb, campaignId),
         getEmailTemplateGroups(pb, campaignId),
         getCustomFields(pb, campaignId),
         getFunnelStages(pb, campaignId),
         getContactStages(pb, campaignId),
+        getBatches(pb, campaignId),
       ]);
 
       setCampaign(campaignData);
-      setContacts(contactsData);
+      setBatches(batchesData);
+      
+      // If there are preselected contacts, filter to only show those
+      let filteredContacts = contactsData;
+      if (preselectedContacts.length > 0) {
+        filteredContacts = contactsData.filter(c => preselectedContacts.includes(c.id));
+      }
+      setContacts(filteredContacts);
+      
       setTemplateGroups(groupsData);
       setCustomFields(fieldsData);
       setFunnelStages(stagesData.sort((a, b) => a.order - b.order));
@@ -139,8 +150,8 @@ export default function SendEmailPage() {
       setTemplates(templatesMap);
 
       // Load field values
-      if (contactsData.length > 0) {
-        const contactIds = contactsData.map((c) => c.id);
+      if (filteredContacts.length > 0) {
+        const contactIds = filteredContacts.map((c) => c.id);
         const values = await getFieldValuesForContacts(pb, contactIds);
         const valueMap = new Map<string, Map<string, string>>();
         values.forEach((v: ContactFieldValue) => {
@@ -166,7 +177,7 @@ export default function SendEmailPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [campaignId]);
+  }, [campaignId, preselectedContacts]);
 
   useEffect(() => {
     loadData();
@@ -230,17 +241,20 @@ export default function SendEmailPage() {
 
   const getContactData = (contact: Contact): Record<string, string> => {
     const company = contact.expand?.company;
+    const sourceCompany = contact.expand?.source_company;
     const data: Record<string, string> = {
       first_name: contact.first_name || "",
       last_name: contact.last_name || "",
       email: contact.email,
       title: contact.title || "",
-      // Company fields with company_ prefix
-      company_name: company?.name || "",
-      company_website: company?.website || "",
-      company_industry: company?.industry || "",
+      // Company fields with company_ prefix (use source company for outreach, regular company for leads)
+      company_name: (sourceCompany || company)?.name || "",
+      company_website: (sourceCompany || company)?.website || "",
+      company_industry: (sourceCompany || company)?.industry || "",
       // Keep legacy "company" for backward compatibility
-      company: company?.name || "",
+      company: (sourceCompany || company)?.name || "",
+      // AI opener (for outreach campaigns)
+      ai_opener: contact.ai_opener || "",
     };
 
     // Add custom field values
@@ -264,6 +278,11 @@ export default function SendEmailPage() {
     const stageId = contactStageMap.get(contactId);
     if (!stageId) return undefined;
     return funnelStages.find((s) => s.id === stageId);
+  };
+
+  const getContactBatch = (contact: Contact): Batch | undefined => {
+    if (!contact.batch) return undefined;
+    return batches.find((b) => b.id === contact.batch);
   };
 
   const sendEmails = async () => {
@@ -347,6 +366,7 @@ export default function SendEmailPage() {
 
   const selectedGroup_ = templateGroups.find((g) => g.id === selectedGroup);
   const activeTemplateCount = getActiveTemplates().length;
+  const hasPreselection = preselectedContacts.length > 0;
 
   if (isLoading) {
     return (
@@ -368,7 +388,7 @@ export default function SendEmailPage() {
   }
 
   return (
-    <div className="space-y-6 max-w-4xl">
+    <div className="space-y-6 max-w-5xl">
       {/* Header */}
       <div className="flex items-center gap-4">
         <Button variant="ghost" size="icon" asChild>
@@ -454,9 +474,13 @@ export default function SendEmailPage() {
           {/* Contact Selection */}
           <Card>
             <CardHeader>
-              <CardTitle>Select Recipients</CardTitle>
+              <CardTitle>
+                {hasPreselection ? "Selected Recipients" : "Select Recipients"}
+              </CardTitle>
               <CardDescription>
-                Choose contacts to receive this email ({selectedContacts.size} selected)
+                {hasPreselection 
+                  ? `${contacts.length} contacts preselected (${selectedContacts.size} will receive emails)`
+                  : `Choose contacts to receive this email (${selectedContacts.size} selected)`}
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -475,19 +499,23 @@ export default function SendEmailPage() {
                       <TableHead>Name</TableHead>
                       <TableHead>Email</TableHead>
                       <TableHead>Company</TableHead>
+                      <TableHead>Batch</TableHead>
                       <TableHead>Funnel Stage</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {contacts.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
-                          No contacts in this campaign
+                        <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                          {hasPreselection 
+                            ? "No contacts found with the provided IDs"
+                            : "No contacts in this campaign"}
                         </TableCell>
                       </TableRow>
                     ) : (
                       contacts.map((contact) => {
                         const stage = getContactStage(contact.id);
+                        const batch = getContactBatch(contact);
                         return (
                           <TableRow key={contact.id}>
                             <TableCell>
@@ -503,6 +531,16 @@ export default function SendEmailPage() {
                             </TableCell>
                             <TableCell>{contact.email}</TableCell>
                             <TableCell>{contact.expand?.company?.name || "-"}</TableCell>
+                            <TableCell>
+                              {batch ? (
+                                <Badge variant="secondary" className="gap-1.5">
+                                  <Layers className="h-3 w-3" />
+                                  {batch.name}
+                                </Badge>
+                              ) : (
+                                <span className="text-muted-foreground">-</span>
+                              )}
+                            </TableCell>
                             <TableCell>
                               {stage ? (
                                 <Badge 

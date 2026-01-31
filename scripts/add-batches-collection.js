@@ -2,10 +2,11 @@
  * Add Batches Collection
  * 
  * This script adds the batches collection if it doesn't exist.
- * Use this if you're getting 400 errors when loading campaigns.
+ * Use this if you're getting 400 errors when loading batches.
  * 
  * Usage:
- * node scripts/add-batches-collection.js
+ *   node scripts/add-batches-collection.js           # Create collection if missing
+ *   node scripts/add-batches-collection.js --fix     # Fix list/view rules if collection exists but list returns 400
  * 
  * Credentials are read from .env.local (POCKETBASE_ADMIN_EMAIL, POCKETBASE_ADMIN_PASSWORD)
  */
@@ -28,6 +29,7 @@ if (fs.existsSync(envPath)) {
 const POCKETBASE_URL = process.env.POCKETBASE_URL || process.env.NEXT_PUBLIC_POCKETBASE_URL || 'http://localhost:8090';
 
 async function main() {
+  console.log('Using PocketBase at:', POCKETBASE_URL, '(should match your app\'s NEXT_PUBLIC_POCKETBASE_URL)');
   // Use env vars, with command line as fallback
   const email = process.env.POCKETBASE_ADMIN_EMAIL || process.argv[2];
   const password = process.env.POCKETBASE_ADMIN_PASSWORD || process.argv[3];
@@ -71,13 +73,34 @@ async function main() {
     'Authorization': token,
   };
 
+  const fixRules = process.argv.includes('--fix');
+
   try {
     // Check if batches collection exists
     console.log('\nChecking if batches collection exists...');
     const checkResponse = await fetch(`${POCKETBASE_URL}/api/collections/batches`, { headers });
     
     if (checkResponse.ok) {
-      console.log('✅ Batches collection already exists!');
+      if (fixRules) {
+        // Update list/view rules so listing works (relation-based rules can return 400 on some PB setups)
+        console.log('Updating batches collection list/view rules (--fix)...');
+        const patchResponse = await fetch(`${POCKETBASE_URL}/api/collections/batches`, {
+          method: 'PATCH',
+          headers,
+          body: JSON.stringify({
+            listRule: '@request.auth.id != ""',
+            viewRule: '@request.auth.id != ""',
+          }),
+        });
+        if (!patchResponse.ok) {
+          const err = await patchResponse.text();
+          throw new Error(`Failed to update rules: ${err}`);
+        }
+        console.log('✅ Batches collection rules updated. Refresh your app and try listing/creating batches again.');
+      } else {
+        console.log('✅ Batches collection already exists!');
+        console.log('If listing batches still returns 400, run: node scripts/add-batches-collection.js --fix');
+      }
       return;
     }
 

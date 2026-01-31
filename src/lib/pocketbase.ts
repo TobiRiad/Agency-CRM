@@ -14,11 +14,14 @@ import type {
   ContactStage,
   FollowUpSequence,
   FollowUpStep,
+  AIScoringConfig,
+  CustomOutputField,
+  CampaignKind,
 } from '@/types';
 
 const POCKETBASE_URL = process.env.NEXT_PUBLIC_POCKETBASE_URL || 'http://localhost:8090';
 
-function isClientResponseError(error: unknown): error is ClientResponseError {
+export function isClientResponseError(error: unknown): error is ClientResponseError {
   return typeof error === 'object' && error !== null && 'status' in error;
 }
 
@@ -137,17 +140,19 @@ export async function getCampaign(pb: PocketBase, id: string): Promise<Campaign>
   return pb.collection('campaigns').getOne<Campaign>(id);
 }
 
-export async function createCampaign(pb: PocketBase, data: { name: string; description: string; user: string }): Promise<Campaign> {
+export async function createCampaign(pb: PocketBase, data: { name: string; description: string; user: string; kind?: CampaignKind }): Promise<Campaign> {
   // Create the campaign
   const campaign = await pb.collection('campaigns').create<Campaign>(data);
   
-  // Auto-create "Uncategorized" funnel stage for this campaign
-  await pb.collection('funnel_stages').create({
-    name: 'Uncategorized',
-    order: 0,
-    color: 'gray',
-    campaign: campaign.id,
-  });
+  // Auto-create "Uncategorized" funnel stage only for outreach campaigns
+  if (!data.kind || data.kind === 'outreach') {
+    await pb.collection('funnel_stages').create({
+      name: 'Uncategorized',
+      order: 0,
+      color: 'gray',
+      campaign: campaign.id,
+    });
+  }
   
   return campaign;
 }
@@ -164,7 +169,15 @@ export async function deleteCampaign(pb: PocketBase, id: string): Promise<boolea
 export async function getCompanies(pb: PocketBase, campaignId: string): Promise<Company[]> {
   const result = await pb.collection('companies').getList<Company>(1, 500, {
     filter: pb.filter('campaign = {:campaignId}', { campaignId }),
-    expand: 'created_by',
+    expand: 'created_by,batch',
+  });
+  return result.items;
+}
+
+export async function getCompaniesByBatch(pb: PocketBase, batchId: string): Promise<Company[]> {
+  const result = await pb.collection('companies').getList<Company>(1, 500, {
+    filter: pb.filter('batch = {:batchId}', { batchId }),
+    expand: 'created_by,batch',
   });
   return result.items;
 }
@@ -178,11 +191,29 @@ export async function getCompany(pb: PocketBase, id: string): Promise<Company> {
 export async function getContactsByCompany(pb: PocketBase, companyId: string): Promise<Contact[]> {
   const result = await pb.collection('contacts').getList<Contact>(1, 500, {
     filter: pb.filter('company = {:companyId}', { companyId }),
+    expand: 'created_by',
   });
   return result.items;
 }
 
-export async function createCompany(pb: PocketBase, data: { name: string; website: string; industry: string; campaign: string; created_by?: string }): Promise<Company> {
+// Get all outreach campaigns (for push-to-outreach dropdown)
+export async function getOutreachCampaigns(pb: PocketBase, userId: string): Promise<Campaign[]> {
+  const result = await pb.collection('campaigns').getList<Campaign>(1, 100, {
+    filter: pb.filter('user = {:userId} && (kind = "outreach" || kind = "")', { userId }),
+  });
+  return result.items;
+}
+
+export async function createCompany(pb: PocketBase, data: { 
+  name: string; 
+  website: string; 
+  industry: string; 
+  campaign: string; 
+  email?: string;
+  description?: string;
+  batch?: string;
+  created_by?: string;
+}): Promise<Company> {
   return pb.collection('companies').create<Company>(data);
 }
 
@@ -195,21 +226,22 @@ export async function deleteCompany(pb: PocketBase, id: string): Promise<boolean
 }
 
 // Batch functions
-export async function getBatches(pb: PocketBase, campaignId: string): Promise<Batch[]> {
+// List batches via our API route: the route uses admin auth and filters by campaign in code.
+// This avoids PocketBase 400s from client-side list + filter on the batches collection.
+export async function getBatches(_pb: PocketBase, campaignId: string): Promise<Batch[]> {
   try {
-    const result = await pb.collection('batches').getList<Batch>(1, 500, {
-      filter: pb.filter('campaign = {:campaignId}', { campaignId }),
-      sort: '-created',
+    const base = typeof window !== "undefined" ? "" : process.env.NEXT_PUBLIC_APP_URL || "";
+    const res = await fetch(`${base}/api/campaigns/${campaignId}/batches`, {
+      cache: 'no-store',
+      headers: {
+        'Cache-Control': 'no-cache',
+      },
     });
-    return result.items;
-  } catch (error) {
-    // If the user's PocketBase instance doesn't have the batches collection yet,
-    // don't fail the whole campaign page — just behave like there are no batches.
-    if (isClientResponseError(error) && (error.status === 404 || error.status === 400)) {
-      console.warn('Batches collection not available yet:', error);
-      return [];
-    }
-    throw error;
+    if (!res.ok) return [];
+    const items = (await res.json()) as Batch[];
+    return Array.isArray(items) ? items : [];
+  } catch {
+    return [];
   }
 }
 
@@ -242,7 +274,7 @@ export async function getContacts(pb: PocketBase, campaignId: string): Promise<C
   try {
     const result = await pb.collection('contacts').getList<Contact>(1, 500, {
       filter: pb.filter('campaign = {:campaignId}', { campaignId }),
-      expand: 'company,batch,created_by',
+      expand: 'company,batch,created_by,source_company',
     });
     return result.items;
   } catch (error) {
@@ -250,7 +282,7 @@ export async function getContacts(pb: PocketBase, campaignId: string): Promise<C
     if (isClientResponseError(error) && error.status === 400) {
       const result = await pb.collection('contacts').getList<Contact>(1, 500, {
         filter: pb.filter('campaign = {:campaignId}', { campaignId }),
-        expand: 'company,created_by',
+        expand: 'company,created_by,source_company',
       });
       return result.items;
     }
@@ -613,4 +645,120 @@ export async function createFollowUpStep(pb: PocketBase, data: {
   order: number;
 }): Promise<FollowUpStep> {
   return pb.collection('follow_up_steps').create<FollowUpStep>(data);
+}
+
+// AI Scoring Config functions
+export async function getAIScoringConfigs(pb: PocketBase, campaignId: string): Promise<AIScoringConfig[]> {
+  const result = await pb.collection('ai_scoring_configs').getList<AIScoringConfig>(1, 100, {
+    filter: pb.filter('campaign = {:campaignId}', { campaignId }),
+  });
+  return result.items;
+}
+
+export async function getAIScoringConfig(pb: PocketBase, id: string): Promise<AIScoringConfig> {
+  return pb.collection('ai_scoring_configs').getOne<AIScoringConfig>(id);
+}
+
+export async function createAIScoringConfig(pb: PocketBase, data: {
+  campaign: string;
+  name: string;
+  system_prompt: string;
+  enable_score: boolean;
+  score_min?: number;
+  score_max?: number;
+  enable_classification: boolean;
+  classification_label?: string;
+  classification_options?: string[];
+  custom_outputs?: CustomOutputField[];
+  model?: string;
+  temperature?: number;
+}): Promise<AIScoringConfig> {
+  return pb.collection('ai_scoring_configs').create<AIScoringConfig>(data);
+}
+
+export async function updateAIScoringConfig(pb: PocketBase, id: string, data: Partial<AIScoringConfig>): Promise<AIScoringConfig> {
+  return pb.collection('ai_scoring_configs').update<AIScoringConfig>(id, data);
+}
+
+export async function deleteAIScoringConfig(pb: PocketBase, id: string): Promise<boolean> {
+  return pb.collection('ai_scoring_configs').delete(id);
+}
+
+// Push company to outreach (creates contacts from lead company)
+export async function pushCompanyToOutreach(
+  pb: PocketBase,
+  leadCompanyId: string,
+  outreachCampaignId: string,
+  funnelStageId?: string,
+  batchId?: string
+): Promise<Contact[]> {
+  // Get the lead company with its contacts (people)
+  const leadCompany = await pb.collection('companies').getOne<Company>(leadCompanyId, {
+    expand: 'contacts_via_company',
+  });
+
+  // Get people under this company (contacts in the leads campaign)
+  const leadContacts = await pb.collection('contacts').getList<Contact>(1, 500, {
+    filter: pb.filter('company = {:companyId}', { companyId: leadCompanyId }),
+  });
+
+  const createdContacts: Contact[] = [];
+
+  if (leadContacts.items.length > 0) {
+    // Push each person as a contact in the outreach campaign
+    for (const leadContact of leadContacts.items) {
+      // Check if contact already exists in outreach campaign
+      const existing = await pb.collection('contacts').getList(1, 1, {
+        filter: pb.filter('campaign = {:campaignId} && email = {:email}', {
+          campaignId: outreachCampaignId,
+          email: leadContact.email,
+        }),
+      });
+
+      if (existing.items.length === 0) {
+        const outreachContact = await pb.collection('contacts').create<Contact>({
+          campaign: outreachCampaignId,
+          company: '', // No company in outreach
+          email: leadContact.email,
+          first_name: leadContact.first_name,
+          last_name: leadContact.last_name,
+          title: leadContact.title,
+          source_company: leadCompanyId,
+          source_contact: leadContact.id,
+        });
+        createdContacts.push(outreachContact);
+      }
+    }
+  } else {
+    // No people under company - create a company-level contact if email exists
+    if (leadCompany.email) {
+      const existing = await pb.collection('contacts').getList(1, 1, {
+        filter: pb.filter('campaign = {:campaignId} && email = {:email}', {
+          campaignId: outreachCampaignId,
+          email: leadCompany.email,
+        }),
+      });
+
+      if (existing.items.length === 0) {
+        const outreachContact = await pb.collection('contacts').create<Contact>({
+          campaign: outreachCampaignId,
+          company: '',
+          email: leadCompany.email,
+          first_name: leadCompany.name,
+          last_name: '',
+          title: '',
+          source_company: leadCompanyId,
+          batch: batchId || undefined,
+        });
+        createdContacts.push(outreachContact);
+
+        // Set funnel stage if provided
+        if (funnelStageId) {
+          await setContactStage(pb, outreachContact.id, funnelStageId);
+        }
+      }
+    }
+  }
+
+  return createdContacts;
 }

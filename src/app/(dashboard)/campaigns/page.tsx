@@ -31,8 +31,16 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { toast } from "@/components/ui/use-toast";
-import { Plus, MoreVertical, Trash2, Edit, Users, Mail, BarChart3, FolderOpen } from "lucide-react";
-import type { Campaign } from "@/types";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Plus, MoreVertical, Trash2, Edit, Users, Mail, BarChart3, FolderOpen, Sparkles, Send } from "lucide-react";
+import type { Campaign, CampaignKind } from "@/types";
 import { formatDate } from "@/lib/utils";
 
 interface CampaignStats {
@@ -70,7 +78,8 @@ export default function CampaignsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
-  const [newCampaign, setNewCampaign] = useState({ name: "", description: "" });
+  const [newCampaign, setNewCampaign] = useState({ name: "", description: "", kind: "outreach" as CampaignKind });
+  const [activeTab, setActiveTab] = useState<CampaignKind>("outreach");
 
   const loadCampaigns = useCallback(async () => {
     try {
@@ -120,6 +129,7 @@ export default function CampaignsPage() {
         name: newCampaign.name,
         description: newCampaign.description,
         user: user.id,
+        kind: newCampaign.kind,
       });
 
       toast({
@@ -128,7 +138,7 @@ export default function CampaignsPage() {
         variant: "success",
       });
 
-      setNewCampaign({ name: "", description: "" });
+      setNewCampaign({ name: "", description: "", kind: "outreach" });
       setIsCreateOpen(false);
       loadCampaigns();
     } catch (error) {
@@ -224,6 +234,33 @@ export default function CampaignsPage() {
                     rows={3}
                   />
                 </div>
+                <div className="space-y-2">
+                  <Label htmlFor="kind">Campaign Type</Label>
+                  <Select
+                    value={newCampaign.kind}
+                    onValueChange={(value) =>
+                      setNewCampaign({ ...newCampaign, kind: value as CampaignKind })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="leads">
+                        <div className="flex items-center gap-2">
+                          <Sparkles className="h-4 w-4" />
+                          Leads - Collect and qualify companies
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="outreach">
+                        <div className="flex items-center gap-2">
+                          <Send className="h-4 w-4" />
+                          Outreach - Email campaigns
+                        </div>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
               <DialogFooter>
                 <Button
@@ -242,8 +279,37 @@ export default function CampaignsPage() {
         </Dialog>
       </div>
 
-      {/* Campaigns Grid */}
-      {campaigns.length === 0 ? (
+      {/* Tabs for Leads vs Outreach */}
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as CampaignKind)}>
+        <TabsList>
+          <TabsTrigger value="outreach">
+            <Send className="mr-2 h-4 w-4" />
+            Outreach Campaigns
+          </TabsTrigger>
+          <TabsTrigger value="leads">
+            <Sparkles className="mr-2 h-4 w-4" />
+            Lead Campaigns
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="outreach" className="mt-6">
+          {renderCampaignsGrid(campaigns.filter(c => !c.kind || c.kind === 'outreach'), campaignStats, handleDeleteCampaign)}
+        </TabsContent>
+
+        <TabsContent value="leads" className="mt-6">
+          {renderCampaignsGrid(campaigns.filter(c => c.kind === 'leads'), campaignStats, handleDeleteCampaign)}
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+function renderCampaignsGrid(
+  campaigns: Campaign[],
+  campaignStats: Map<string, CampaignStats>,
+  handleDeleteCampaign: (id: string) => void
+) {
+  return campaigns.length === 0 ? (
         <Card className="border-dashed">
           <CardContent className="flex flex-col items-center justify-center py-12">
             <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mb-4">
@@ -253,15 +319,13 @@ export default function CampaignsPage() {
             <p className="text-muted-foreground text-center mb-4 max-w-sm">
               Create your first campaign to start managing leads and sending emails.
             </p>
-            <Button onClick={() => setIsCreateOpen(true)}>
-              <Plus className="mr-2 h-4 w-4" />
-              Create Campaign
-            </Button>
           </CardContent>
         </Card>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {campaigns.map((campaign) => (
+          {campaigns.map((campaign) => {
+            const stats = campaignStats.get(campaign.id);
+            return (
             <Card key={campaign.id} className="card-hover">
               <CardHeader className="pb-3">
                 <div className="flex items-start justify-between">
@@ -306,12 +370,14 @@ export default function CampaignsPage() {
                 <div className="flex items-center gap-4 text-sm text-muted-foreground">
                   <div className="flex items-center gap-1">
                     <Users className="h-4 w-4" />
-                    <span>{campaignStats.get(campaign.id)?.contactCount ?? 0} contacts</span>
+                    <span>{stats?.contactCount ?? 0} {campaign.kind === 'leads' ? 'companies' : 'contacts'}</span>
                   </div>
-                  <div className="flex items-center gap-1">
-                    <Mail className="h-4 w-4" />
-                    <span>{campaignStats.get(campaign.id)?.emailSentCount ?? 0} sent</span>
-                  </div>
+                  {campaign.kind !== 'leads' && (
+                    <div className="flex items-center gap-1">
+                      <Mail className="h-4 w-4" />
+                      <span>{stats?.emailSentCount ?? 0} sent</span>
+                    </div>
+                  )}
                 </div>
                 <p className="text-xs text-muted-foreground mt-3">
                   Created {formatDate(campaign.created)}
@@ -319,22 +385,32 @@ export default function CampaignsPage() {
                 <div className="mt-4 flex gap-2">
                   <Button asChild variant="outline" size="sm" className="flex-1">
                     <Link href={`/campaigns/${campaign.id}`}>
-                      <Users className="mr-2 h-4 w-4" />
-                      Contacts
+                      {campaign.kind === 'leads' ? (
+                        <>
+                          <Sparkles className="mr-2 h-4 w-4" />
+                          View Leads
+                        </>
+                      ) : (
+                        <>
+                          <Users className="mr-2 h-4 w-4" />
+                          Contacts
+                        </>
+                      )}
                     </Link>
                   </Button>
-                  <Button asChild variant="outline" size="sm" className="flex-1">
-                    <Link href={`/campaigns/${campaign.id}/dashboard`}>
-                      <BarChart3 className="mr-2 h-4 w-4" />
-                      Dashboard
-                    </Link>
-                  </Button>
+                  {campaign.kind !== 'leads' && (
+                    <Button asChild variant="outline" size="sm" className="flex-1">
+                      <Link href={`/campaigns/${campaign.id}/dashboard`}>
+                        <BarChart3 className="mr-2 h-4 w-4" />
+                        Dashboard
+                      </Link>
+                    </Button>
+                  )}
                 </div>
               </CardContent>
             </Card>
-          ))}
+            );
+          })}
         </div>
-      )}
-    </div>
-  );
+      );
 }

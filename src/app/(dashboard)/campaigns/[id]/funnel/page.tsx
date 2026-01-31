@@ -233,12 +233,17 @@ export default function FunnelPage() {
   const loadData = useCallback(async () => {
     try {
       const pb = getClientPB();
-      const [campaignData, contactsData, stagesData, contactStagesData, batchesData] = await Promise.all([
-        getCampaign(pb, campaignId),
+      const campaignData = await getCampaign(pb, campaignId);
+      // Only load batches for outreach campaigns (not leads)
+      const batchesPromise = campaignData.kind === "leads"
+        ? Promise.resolve([])
+        : getBatches(pb, campaignId);
+
+      const [contactsData, stagesData, contactStagesData, batchesData] = await Promise.all([
         getContacts(pb, campaignId),
         getFunnelStages(pb, campaignId),
         getContactStages(pb, campaignId),
-        getBatches(pb, campaignId),
+        batchesPromise,
       ]);
 
       setCampaign(campaignData);
