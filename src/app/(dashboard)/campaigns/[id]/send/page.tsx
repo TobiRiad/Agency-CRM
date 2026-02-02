@@ -44,6 +44,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "@/components/ui/use-toast";
+import { Textarea } from "@/components/ui/textarea";
 import {
   ArrowLeft,
   Send,
@@ -51,6 +52,12 @@ import {
   AlertCircle,
   Mail,
   Layers,
+  Eye,
+  Pencil,
+  ChevronDown,
+  ChevronUp,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react";
 import type {
   Campaign,
@@ -67,7 +74,19 @@ import type {
 } from "@/types";
 import { interpolateTemplate } from "@/lib/utils";
 
-type SendStep = "select" | "sending" | "complete";
+type SendStep = "select" | "preview" | "sending" | "complete";
+
+interface PreparedEmail {
+  contactId: string;
+  contact: Contact;
+  templateId: string;
+  templateName: string;
+  to: string;
+  subject: string;
+  body: string;
+  approved: boolean;
+  expanded: boolean;
+}
 
 export default function SendEmailPage() {
   const params = useParams();
@@ -106,6 +125,9 @@ export default function SendEmailPage() {
     failed: 0,
     errors: [] as string[],
   });
+
+  // Preview/approval state
+  const [preparedEmails, setPreparedEmails] = useState<PreparedEmail[]>([]);
 
   const loadData = useCallback(async () => {
     try {
@@ -285,7 +307,7 @@ export default function SendEmailPage() {
     return batches.find((b) => b.id === contact.batch);
   };
 
-  const sendEmails = async () => {
+  const prepareEmailsForPreview = () => {
     if (selectedContacts.size === 0) {
       toast({
         title: "No contacts selected",
@@ -305,32 +327,78 @@ export default function SendEmailPage() {
       return;
     }
 
-    setStep("sending");
     const selectedContactsList = contacts.filter((c) => selectedContacts.has(c.id));
-    const total = selectedContactsList.length;
+    const prepared: PreparedEmail[] = selectedContactsList.map((contact) => {
+      // Randomly select a template for A/B testing
+      const template = activeTemplates[Math.floor(Math.random() * activeTemplates.length)];
+      const contactData = getContactData(contact);
+
+      return {
+        contactId: contact.id,
+        contact,
+        templateId: template.id,
+        templateName: template.name || "Template",
+        to: contact.email,
+        subject: interpolateTemplate(template.subject, contactData),
+        body: interpolateTemplate(template.body, contactData),
+        approved: true, // Default to approved
+        expanded: false,
+      };
+    });
+
+    setPreparedEmails(prepared);
+    setStep("preview");
+  };
+
+  const updatePreparedEmail = (index: number, updates: Partial<PreparedEmail>) => {
+    setPreparedEmails((prev) => {
+      const updated = [...prev];
+      updated[index] = { ...updated[index], ...updates };
+      return updated;
+    });
+  };
+
+  const toggleAllApproved = (approved: boolean) => {
+    setPreparedEmails((prev) => prev.map((email) => ({ ...email, approved })));
+  };
+
+  const toggleAllExpanded = (expanded: boolean) => {
+    setPreparedEmails((prev) => prev.map((email) => ({ ...email, expanded })));
+  };
+
+  const sendApprovedEmails = async () => {
+    const approvedEmails = preparedEmails.filter((e) => e.approved);
+    
+    if (approvedEmails.length === 0) {
+      toast({
+        title: "No emails approved",
+        description: "Please approve at least one email to send.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setStep("sending");
+    const total = approvedEmails.length;
     let success = 0;
     let failed = 0;
     const errors: string[] = [];
 
-    for (let i = 0; i < selectedContactsList.length; i++) {
-      const contact = selectedContactsList[i];
+    for (let i = 0; i < approvedEmails.length; i++) {
+      const email = approvedEmails[i];
       setSendProgress({ current: i + 1, total });
 
       try {
-        // Randomly select a template for A/B testing
-        const template = activeTemplates[Math.floor(Math.random() * activeTemplates.length)];
-        const contactData = getContactData(contact);
-
         const response = await fetch("/api/email/send", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            contactId: contact.id,
-            templateId: template.id,
+            contactId: email.contactId,
+            templateId: email.templateId,
             campaignId,
-            to: contact.email,
-            subject: interpolateTemplate(template.subject, contactData),
-            html: interpolateTemplate(template.body, contactData),
+            to: email.to,
+            subject: email.subject,
+            html: email.body,
             // If Gmail is configured as the provider, the server will use the configured Gmail address.
             ...(emailProvider === "gmail"
               ? {}
@@ -347,15 +415,16 @@ export default function SendEmailPage() {
           success++;
         } else {
           failed++;
-          errors.push(`${contact.email}: ${result.error}`);
+          errors.push(`${email.to}: ${result.error}`);
         }
-      } catch (error: any) {
+      } catch (error: unknown) {
         failed++;
-        errors.push(`${contact.email}: ${error.message || "Unknown error"}`);
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        errors.push(`${email.to}: ${errorMessage}`);
       }
 
       // Small delay between emails to avoid rate limiting
-      if (i < selectedContactsList.length - 1) {
+      if (i < approvedEmails.length - 1) {
         await new Promise((resolve) => setTimeout(resolve, 200));
       }
     }
@@ -567,15 +636,170 @@ export default function SendEmailPage() {
             </CardContent>
           </Card>
 
-          {/* Send Button */}
+          {/* Preview Button */}
           <div className="flex justify-end">
             <Button
               size="lg"
-              onClick={sendEmails}
+              onClick={prepareEmailsForPreview}
               disabled={selectedContacts.size === 0 || !selectedGroup || activeTemplateCount === 0}
             >
+              <Eye className="mr-2 h-4 w-4" />
+              Preview & Approve ({selectedContacts.size} emails)
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Preview Step */}
+      {step === "preview" && (
+        <div className="space-y-4">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Review & Approve Emails</CardTitle>
+                  <CardDescription>
+                    Review each email before sending. You can edit the subject and body, and choose which emails to send.
+                  </CardDescription>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => toggleAllExpanded(true)}
+                  >
+                    <ChevronDown className="h-4 w-4 mr-1" />
+                    Expand All
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => toggleAllExpanded(false)}
+                  >
+                    <ChevronUp className="h-4 w-4 mr-1" />
+                    Collapse All
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {/* Bulk actions */}
+              <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
+                <div className="flex items-center gap-4">
+                  <span className="text-sm font-medium">
+                    {preparedEmails.filter((e) => e.approved).length} of {preparedEmails.length} approved
+                  </span>
+                  <Button variant="ghost" size="sm" onClick={() => toggleAllApproved(true)}>
+                    <CheckCircle2 className="h-4 w-4 mr-1 text-green-600" />
+                    Approve All
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => toggleAllApproved(false)}>
+                    <XCircle className="h-4 w-4 mr-1 text-red-600" />
+                    Reject All
+                  </Button>
+                </div>
+              </div>
+
+              {/* Email previews */}
+              <div className="space-y-3 max-h-[60vh] overflow-y-auto">
+                {preparedEmails.map((email, index) => (
+                  <div
+                    key={email.contactId}
+                    className={`border rounded-lg transition-colors ${
+                      email.approved ? "border-green-200 bg-green-50/50 dark:bg-green-900/10" : "border-red-200 bg-red-50/50 dark:bg-red-900/10"
+                    }`}
+                  >
+                    {/* Header - always visible */}
+                    <div
+                      className="flex items-center justify-between p-3 cursor-pointer"
+                      onClick={() => updatePreparedEmail(index, { expanded: !email.expanded })}
+                    >
+                      <div className="flex items-center gap-3">
+                        <Checkbox
+                          checked={email.approved}
+                          onCheckedChange={(checked) => {
+                            updatePreparedEmail(index, { approved: checked as boolean });
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                        <div>
+                          <p className="font-medium text-sm">
+                            {email.contact.first_name} {email.contact.last_name}
+                          </p>
+                          <p className="text-xs text-muted-foreground">{email.to}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <Badge variant="outline" className="text-xs">
+                          {email.templateName}
+                        </Badge>
+                        {email.approved ? (
+                          <CheckCircle2 className="h-5 w-5 text-green-600" />
+                        ) : (
+                          <XCircle className="h-5 w-5 text-red-400" />
+                        )}
+                        {email.expanded ? (
+                          <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                        ) : (
+                          <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Expanded content */}
+                    {email.expanded && (
+                      <div className="border-t p-4 space-y-4" onClick={(e) => e.stopPropagation()}>
+                        <div className="space-y-2">
+                          <Label className="text-xs font-medium text-muted-foreground">Subject</Label>
+                          <Input
+                            value={email.subject}
+                            onChange={(e) => updatePreparedEmail(index, { subject: e.target.value })}
+                            className="font-medium"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="text-xs font-medium text-muted-foreground">Body (HTML)</Label>
+                          <Textarea
+                            value={email.body}
+                            onChange={(e) => updatePreparedEmail(index, { body: e.target.value })}
+                            rows={8}
+                            className="font-mono text-sm"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="text-xs font-medium text-muted-foreground">Preview</Label>
+                          <div 
+                            className="border rounded-lg p-4 bg-white dark:bg-slate-950 prose prose-sm max-w-none dark:prose-invert"
+                            dangerouslySetInnerHTML={{ __html: email.body }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Action buttons */}
+          <div className="flex justify-between">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setStep("select");
+                setPreparedEmails([]);
+              }}
+            >
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Back to Selection
+            </Button>
+            <Button
+              size="lg"
+              onClick={sendApprovedEmails}
+              disabled={preparedEmails.filter((e) => e.approved).length === 0}
+            >
               <Send className="mr-2 h-4 w-4" />
-              Send to {selectedContacts.size} contacts
+              Send {preparedEmails.filter((e) => e.approved).length} Approved Emails
             </Button>
           </div>
         </div>
@@ -651,6 +875,7 @@ export default function SendEmailPage() {
                 onClick={() => {
                   setStep("select");
                   setSelectedContacts(new Set());
+                  setPreparedEmails([]);
                 }}
               >
                 Send More

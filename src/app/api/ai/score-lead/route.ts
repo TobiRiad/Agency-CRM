@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerAdminPB } from "@/lib/pocketbase";
 import OpenAI from "openai";
-import type { Company, AIScoringConfig, CustomOutputField } from "@/types";
+import type { Company, AIScoringConfig, Campaign, FirecrawlContent } from "@/types";
+import { scrapeUrls, formatContentForAI } from "@/lib/firecrawl";
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
+
+// Cache TTL for scraped content (7 days in ms)
+const SCRAPE_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
 
 export async function POST(request: NextRequest) {
   try {
@@ -28,13 +32,50 @@ export async function POST(request: NextRequest) {
 
     const pb = await getServerAdminPB();
 
-    // Get the company and AI config
+    // Get the company, AI config, and campaign
     const [company, config] = await Promise.all([
       pb.collection("companies").getOne<Company>(companyId, {
-        expand: "contacts_via_company",
+        expand: "campaign",
       }),
       pb.collection("ai_scoring_configs").getOne<AIScoringConfig>(configId),
     ]);
+
+    const campaign = company.expand?.campaign as Campaign | undefined;
+
+    // Check if we should scrape website content
+    let websiteContent: FirecrawlContent | null = null;
+    let needsScrape = false;
+
+    if (campaign?.enable_firecrawl && company.firecrawl_urls) {
+      // Check if we have cached content that's still fresh
+      if (company.firecrawl_content && company.firecrawl_scraped_at) {
+        const scrapedAt = new Date(company.firecrawl_scraped_at).getTime();
+        const now = Date.now();
+        if (now - scrapedAt < SCRAPE_CACHE_TTL) {
+          // Use cached content
+          websiteContent = company.firecrawl_content;
+        } else {
+          needsScrape = true;
+        }
+      } else {
+        needsScrape = true;
+      }
+
+      // Scrape if needed
+      if (needsScrape && process.env.FIRECRAWL_API_KEY) {
+        try {
+          websiteContent = await scrapeUrls(company.firecrawl_urls, process.env.FIRECRAWL_API_KEY);
+          // Cache the scraped content
+          await pb.collection("companies").update(companyId, {
+            firecrawl_content: websiteContent,
+            firecrawl_scraped_at: new Date().toISOString(),
+          });
+        } catch (scrapeError) {
+          console.error("Failed to scrape website content:", scrapeError);
+          // Continue without scraped content
+        }
+      }
+    }
 
     // Build the prompt with company data
     const companyData = {
@@ -43,11 +84,6 @@ export async function POST(request: NextRequest) {
       email: company.email || "",
       description: company.description || "",
       industry: company.industry || "",
-      people: (company.expand?.contacts_via_company || []).map((c: any) => ({
-        name: `${c.first_name || ""} ${c.last_name || ""}`.trim(),
-        email: c.email,
-        title: c.title || "",
-      })),
     };
 
     // Build user message with company context
@@ -63,11 +99,15 @@ Industry: ${companyData.industry || "Not provided"}`;
       userMessage += `\n\nCompany Description:\n${companyData.description}`;
     }
 
-    userMessage += `\n\nPeople at Company: ${companyData.people.length > 0 
-      ? companyData.people.map(p => `${p.name} (${p.title}) - ${p.email}`).join(", ")
-      : "None listed"}
+    // Include scraped website content if available
+    if (websiteContent && Object.keys(websiteContent).length > 0) {
+      const formattedContent = formatContentForAI(websiteContent);
+      if (formattedContent) {
+        userMessage += `\n\n## Website Content (Scraped)\n\n${formattedContent}`;
+      }
+    }
 
-Based on the criteria provided, evaluate this company and return a JSON response.`;
+    userMessage += `\n\nBased on the criteria provided, evaluate this company and return a JSON response.`;
 
     // Build the system prompt with scoring instructions
     let systemPrompt = config.system_prompt;

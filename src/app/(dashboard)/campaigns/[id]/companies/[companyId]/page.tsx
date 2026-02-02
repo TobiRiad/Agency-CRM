@@ -493,18 +493,24 @@ export default function CompanyDetailPage() {
                     </div>
                   )}
 
-                  {/* Custom AI Outputs */}
+                  {/* Custom AI Outputs - read from ai_data JSON */}
                   {aiConfigs.length > 0 && aiConfigs[0].custom_outputs?.map((output) => {
-                    const fieldName = `ai_custom_${output.name}`;
-                    const value = (company as Record<string, unknown>)[fieldName];
+                    // Read from ai_data JSON object instead of separate fields
+                    const value = company.ai_data?.[output.name];
                     if (value === undefined || value === null) return null;
                     return (
                       <div key={output.id} className="pt-2 border-t">
                         <p className="text-sm text-muted-foreground mb-1">{output.label}</p>
                         {output.type === "boolean" ? (
-                          <Badge variant={value === "true" ? "default" : "secondary"}>
+                          <Badge variant={value === "true" || value === true ? "default" : value === "false" || value === false ? "secondary" : "outline"}>
                             {String(value)}
                           </Badge>
+                        ) : output.type === "nested_json" ? (
+                          <pre className="text-xs font-mono bg-muted p-2 rounded overflow-auto max-h-32">
+                            {JSON.stringify(value, null, 2)}
+                          </pre>
+                        ) : output.type === "list" ? (
+                          <Badge variant="outline">{String(value)}</Badge>
                         ) : (
                           <p className="text-sm">{String(value)}</p>
                         )}

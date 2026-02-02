@@ -66,8 +66,13 @@ import {
   X,
   Sparkles,
   Edit,
+  Copy,
+  Upload,
 } from "lucide-react";
-import type { Campaign, CustomField, CustomFieldType, FunnelStage, IndustryType, Batch, AIScoringConfig, CustomOutputField, CustomOutputType } from "@/types";
+import type { Campaign, CustomField, CustomFieldType, FunnelStage, IndustryType, Batch, AIScoringConfig, CustomOutputField, CustomOutputType, FirecrawlPageType } from "@/types";
+import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Globe } from "lucide-react";
 import { DEFAULT_FUNNEL_STAGES, getStageColor, FUNNEL_STAGE_COLORS } from "@/lib/utils";
 
 export default function CampaignSettingsPage() {
@@ -90,6 +95,8 @@ export default function CampaignSettingsPage() {
     industry_type: "text" as IndustryType,
     industry_options: [] as string[],
     ai_opener_prompt: "",
+    enable_firecrawl: false,
+    firecrawl_pages: ["homepage", "about"] as FirecrawlPageType[],
   });
 
   // Industry options form
@@ -169,6 +176,8 @@ export default function CampaignSettingsPage() {
         industry_type: campaignData.industry_type || "text",
         industry_options: campaignData.industry_options || [],
         ai_opener_prompt: campaignData.ai_opener_prompt || "",
+        enable_firecrawl: campaignData.enable_firecrawl || false,
+        firecrawl_pages: campaignData.firecrawl_pages || ["homepage", "about"],
       });
       setCustomFields(fieldsData);
       setFunnelStages(stagesData);
@@ -207,6 +216,8 @@ export default function CampaignSettingsPage() {
         industry_type: campaignForm.industry_type,
         industry_options: campaignForm.industry_options,
         ai_opener_prompt: campaignForm.ai_opener_prompt,
+        enable_firecrawl: campaignForm.enable_firecrawl,
+        firecrawl_pages: campaignForm.firecrawl_pages,
       });
       toast({
         title: "Settings saved",
@@ -659,7 +670,7 @@ export default function CampaignSettingsPage() {
   const handleRemoveCustomOutput = (id: string) => {
     setAiConfigForm({
       ...aiConfigForm,
-      custom_outputs: aiConfigForm.custom_outputs.filter(co => co.id !== id),
+      custom_outputs: (aiConfigForm.custom_outputs || []).filter(co => co.id !== id),
     });
   };
 
@@ -678,6 +689,287 @@ export default function CampaignSettingsPage() {
       ...newCustomOutput,
       list_options: newCustomOutput.list_options?.filter(o => o !== option) || [],
     });
+  };
+
+  // Generate JSON instructions for AI Scoring Config
+  const generateAIScoringInstructions = () => {
+    const instructions = `# AI Scoring Configuration JSON Generator
+
+You are helping to generate a JSON configuration for an AI lead scoring system. The user will describe their scoring criteria, and you should generate a valid JSON configuration.
+
+## JSON Schema
+
+\`\`\`typescript
+interface AIScoringConfig {
+  name: string;                        // Configuration name (e.g., "SaaS ICP Scorer")
+  system_prompt: string;               // Main prompt/criteria for AI evaluation
+  enable_score: boolean;               // Whether to enable numeric scoring
+  score_min?: number;                  // Minimum score (default: 0)
+  score_max?: number;                  // Maximum score (default: 100)
+  enable_classification: boolean;      // Whether to enable classification
+  classification_label?: string;       // Label for classification field (e.g., "Industry", "Category")
+  classification_options?: string[];   // Array of classification options to choose from
+  custom_outputs?: CustomOutputField[]; // Array of custom output fields
+  model?: string;                      // OpenAI model: "gpt-4o-mini" | "gpt-4o" | "gpt-4-turbo"
+  temperature?: number;                // Temperature 0-2 (default: 0.3, lower = more consistent)
+}
+
+interface CustomOutputField {
+  id: string;                          // Unique ID (use format: "custom_" + timestamp or descriptive name)
+  name: string;                        // JSON key name (e.g., "industry_fit")
+  label: string;                       // Display label (e.g., "Industry Fit")
+  description: string;                 // Description telling AI what to extract/return
+  type: "text" | "number" | "boolean" | "list" | "nested_json";
+  // For 'list' type:
+  list_options?: string[];             // Options to choose from
+  list_description?: string;           // How to pick from the list
+  // For 'boolean' type:
+  boolean_options?: ("true" | "false" | "unknown")[]; // Which values are valid (default: all three)
+  // For 'nested_json' type:
+  nested_json_max_pairs?: number;      // Max key-value pairs (default: 10)
+  nested_json_description?: string;    // What the JSON structure should contain
+}
+\`\`\`
+
+## Example JSON Configuration
+
+\`\`\`json
+{
+  "name": "SaaS B2B Lead Scorer",
+  "system_prompt": "You are evaluating B2B SaaS companies for investment potential. Score them based on:\\n1. Business Model (B2B vs B2C)\\n2. Revenue Model (Recurring vs One-time)\\n3. Market Size\\n4. Team Experience\\n5. Product-Market Fit indicators",
+  "enable_score": true,
+  "score_min": 0,
+  "score_max": 100,
+  "enable_classification": true,
+  "classification_label": "Investment Stage",
+  "classification_options": ["Pre-seed", "Seed", "Series A", "Series B+", "Not a fit"],
+  "custom_outputs": [
+    {
+      "id": "custom_business_model",
+      "name": "business_model",
+      "label": "Business Model",
+      "description": "Identify if this is B2B, B2C, or B2B2C based on their website and description",
+      "type": "list",
+      "list_options": ["B2B", "B2C", "B2B2C", "Unknown"],
+      "list_description": "Select based on their primary customer type"
+    },
+    {
+      "id": "custom_has_recurring",
+      "name": "has_recurring_revenue",
+      "label": "Recurring Revenue",
+      "description": "Determine if the company has a subscription or recurring revenue model",
+      "type": "boolean",
+      "boolean_options": ["true", "false", "unknown"]
+    },
+    {
+      "id": "custom_key_signals",
+      "name": "key_signals",
+      "label": "Key Signals",
+      "description": "Extract key investment signals like funding history, notable customers, growth indicators",
+      "type": "nested_json",
+      "nested_json_max_pairs": 5,
+      "nested_json_description": "Key-value pairs where keys are signal types (e.g., 'funding', 'customers', 'growth') and values are the relevant details"
+    },
+    {
+      "id": "custom_summary",
+      "name": "analysis_summary",
+      "label": "Analysis Summary",
+      "description": "Provide a 2-3 sentence summary of why this company scored the way it did",
+      "type": "text"
+    }
+  ],
+  "model": "gpt-4o-mini",
+  "temperature": 0.3
+}
+\`\`\`
+
+## Instructions
+
+When the user describes their scoring needs:
+1. Create an appropriate \`name\` that describes the scoring purpose
+2. Write a detailed \`system_prompt\` with clear scoring criteria
+3. Set \`enable_score\` and configure the score range if needed
+4. Set up \`classification_label\` and \`classification_options\` if categorization is needed
+5. Add \`custom_outputs\` for any additional data points to extract
+6. Choose an appropriate \`model\` (gpt-4o-mini for speed/cost, gpt-4o for complex analysis)
+7. Set \`temperature\` (0.1-0.3 for consistent scoring, higher for more creative analysis)
+
+Output ONLY the JSON configuration, no explanation needed.`;
+
+    navigator.clipboard.writeText(instructions);
+    toast({
+      title: "Copied!",
+      description: "AI Scoring JSON instructions copied to clipboard.",
+    });
+  };
+
+  // Generate JSON instructions for AI Opener Config
+  const generateAIOpenerInstructions = () => {
+    const instructions = `# AI Opener Configuration JSON Generator
+
+You are helping to generate a JSON configuration for an AI email opener generator. The user will describe their outreach style, and you should generate a valid JSON configuration.
+
+## JSON Schema
+
+\`\`\`typescript
+interface AIOpenerConfig {
+  ai_opener_prompt: string;  // System prompt for generating personalized email openers
+}
+\`\`\`
+
+## Context
+
+This prompt will be used to generate personalized one-liner openers for cold emails. The AI will receive:
+- Contact info: name, email, title
+- Company info: name, website, industry, description
+- AI analysis data from the source company (if available from lead scoring)
+
+## Example JSON Configuration
+
+\`\`\`json
+{
+  "ai_opener_prompt": "You are a professional email outreach specialist focused on B2B SaaS sales. Generate a personalized, engaging one-liner opener for cold emails.\\n\\nGuidelines:\\n1. Reference something specific about their company (recent news, product, or achievement)\\n2. Connect it to a relevant pain point or opportunity\\n3. Keep it concise (one sentence, max two)\\n4. Avoid generic phrases like 'I hope this email finds you well'\\n5. Sound natural and human, not salesy\\n6. When possible, reference their role or industry expertise\\n\\nTone: Professional but warm, curious, and value-focused."
+}
+\`\`\`
+
+## More Examples
+
+### For Technical/Developer Outreach:
+\`\`\`json
+{
+  "ai_opener_prompt": "Generate a technical, peer-to-peer style opener for developer-focused outreach. Reference specific technologies they use, open source contributions, or technical blog posts. Avoid marketing speak - write like one engineer talking to another. Keep it brief and genuine."
+}
+\`\`\`
+
+### For Executive Outreach:
+\`\`\`json
+{
+  "ai_opener_prompt": "Create an executive-level opener that demonstrates business acumen. Reference company metrics, market position, strategic initiatives, or industry trends. Be concise and respect their time. Focus on business outcomes rather than features."
+}
+\`\`\`
+
+### For Startup Founders:
+\`\`\`json
+{
+  "ai_opener_prompt": "Write a founder-to-founder style opener. Reference their company journey, funding news, product launches, or the problem they're solving. Be authentic and show genuine interest in their mission. Entrepreneurs appreciate directness - get to the point quickly."
+}
+\`\`\`
+
+## Instructions
+
+When the user describes their outreach style:
+1. Understand their target audience (executives, developers, marketers, etc.)
+2. Identify the tone they want (professional, casual, technical, etc.)
+3. Note any specific elements they want to reference (company news, products, etc.)
+4. Include guidelines for what to avoid
+5. Set expectations for length and style
+
+Output ONLY the JSON configuration with the \`ai_opener_prompt\` field.`;
+
+    navigator.clipboard.writeText(instructions);
+    toast({
+      title: "Copied!",
+      description: "AI Opener JSON instructions copied to clipboard.",
+    });
+  };
+
+  // Handle JSON file upload for AI Scoring Config
+  const handleAIScoringJsonUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const json = JSON.parse(event.target?.result as string);
+        
+        // Validate and apply the config
+        setAiConfigForm({
+          name: json.name || "",
+          system_prompt: json.system_prompt || "",
+          enable_score: json.enable_score ?? true,
+          score_min: json.score_min ?? 0,
+          score_max: json.score_max ?? 100,
+          enable_classification: json.enable_classification ?? false,
+          classification_label: json.classification_label || "Industry",
+          classification_options: json.classification_options || [],
+          custom_outputs: (json.custom_outputs || []).map((co: any, idx: number) => ({
+            id: co.id || `custom_${Date.now()}_${idx}`,
+            name: co.name || "",
+            label: co.label || "",
+            description: co.description || "",
+            type: co.type || "text",
+            list_options: co.list_options || [],
+            list_description: co.list_description || "",
+            boolean_options: co.boolean_options || ['true', 'false', 'unknown'],
+            nested_json_max_pairs: co.nested_json_max_pairs || 10,
+            nested_json_description: co.nested_json_description || "",
+          })),
+          model: json.model || "gpt-4o-mini",
+          temperature: json.temperature ?? 0.3,
+        });
+        
+        setIsAddAIConfigOpen(true);
+        toast({
+          title: "JSON Loaded",
+          description: "AI Scoring configuration loaded from JSON file. Review and save.",
+          variant: "success",
+        });
+      } catch (error) {
+        console.error("Failed to parse JSON:", error);
+        toast({
+          title: "Invalid JSON",
+          description: "The uploaded file is not valid JSON.",
+          variant: "destructive",
+        });
+      }
+    };
+    reader.readAsText(file);
+    
+    // Reset the input so the same file can be uploaded again
+    e.target.value = "";
+  };
+
+  // Handle JSON file upload for AI Opener Config
+  const handleAIOpenerJsonUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const json = JSON.parse(event.target?.result as string);
+        
+        if (json.ai_opener_prompt) {
+          setCampaignForm({
+            ...campaignForm,
+            ai_opener_prompt: json.ai_opener_prompt,
+          });
+          toast({
+            title: "JSON Loaded",
+            description: "AI Opener prompt loaded from JSON file. Don't forget to save changes!",
+            variant: "success",
+          });
+        } else {
+          toast({
+            title: "Missing Field",
+            description: "JSON must contain 'ai_opener_prompt' field.",
+            variant: "destructive",
+          });
+        }
+      } catch (error) {
+        console.error("Failed to parse JSON:", error);
+        toast({
+          title: "Invalid JSON",
+          description: "The uploaded file is not valid JSON.",
+          variant: "destructive",
+        });
+      }
+    };
+    reader.readAsText(file);
+    
+    // Reset the input so the same file can be uploaded again
+    e.target.value = "";
   };
 
   if (isLoading) {
@@ -775,7 +1067,32 @@ export default function CampaignSettingsPage() {
                 </div>
                 {(campaign?.kind === 'outreach' || !campaign?.kind) && (
                   <div className="space-y-2">
-                    <Label htmlFor="ai_opener_prompt">AI Opener Prompt</Label>
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="ai_opener_prompt">AI Opener Prompt</Label>
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={generateAIOpenerInstructions}
+                        >
+                          <Copy className="h-4 w-4 mr-1" />
+                          Copy JSON Instructions for AI
+                        </Button>
+                        <div className="relative">
+                          <input
+                            type="file"
+                            accept=".json,application/json"
+                            onChange={handleAIOpenerJsonUpload}
+                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                          />
+                          <Button type="button" variant="outline" size="sm">
+                            <Upload className="h-4 w-4 mr-1" />
+                            Upload JSON
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
                     <Textarea
                       id="ai_opener_prompt"
                       value={campaignForm.ai_opener_prompt}
@@ -881,6 +1198,85 @@ export default function CampaignSettingsPage() {
               </form>
             </CardContent>
           </Card>
+
+          {/* Firecrawl Settings - Only for leads campaigns */}
+          {campaign?.kind === 'leads' && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Globe className="h-5 w-5" />
+                  Website Scraping (Firecrawl)
+                </CardTitle>
+                <CardDescription>
+                  Automatically scrape company websites to gather more data for AI scoring.
+                  When enabled, the system will discover and cache key pages when adding companies.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form onSubmit={handleSaveCampaign} className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="enable_firecrawl">Enable Website Scraping</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Scrape company websites to enrich AI scoring with actual page content
+                      </p>
+                    </div>
+                    <Switch
+                      id="enable_firecrawl"
+                      checked={campaignForm.enable_firecrawl}
+                      onCheckedChange={(checked) =>
+                        setCampaignForm({ ...campaignForm, enable_firecrawl: checked })
+                      }
+                    />
+                  </div>
+
+                  {campaignForm.enable_firecrawl && (
+                    <div className="space-y-3 pt-4 border-t">
+                      <Label>Pages to Scrape</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Select which pages to discover and scrape from company websites.
+                        The content will be used to provide better context for AI scoring.
+                      </p>
+                      <div className="grid grid-cols-2 gap-3">
+                        {(["homepage", "about", "pricing", "careers", "blog", "products", "services", "contact"] as FirecrawlPageType[]).map((pageType) => (
+                          <div key={pageType} className="flex items-center space-x-2">
+                            <Checkbox
+                              id={`page-${pageType}`}
+                              checked={campaignForm.firecrawl_pages.includes(pageType)}
+                              onCheckedChange={(checked) => {
+                                if (checked) {
+                                  setCampaignForm({
+                                    ...campaignForm,
+                                    firecrawl_pages: [...campaignForm.firecrawl_pages, pageType],
+                                  });
+                                } else {
+                                  setCampaignForm({
+                                    ...campaignForm,
+                                    firecrawl_pages: campaignForm.firecrawl_pages.filter(p => p !== pageType),
+                                  });
+                                }
+                              }}
+                            />
+                            <Label htmlFor={`page-${pageType}`} className="font-normal capitalize">
+                              {pageType === "homepage" ? "Homepage" : pageType.replace("-", " ")}
+                            </Label>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-2">
+                        Note: Homepage is always included. The system uses pattern matching to find the URLs 
+                        (e.g., /about, /about-us, /company for the About page).
+                      </p>
+                    </div>
+                  )}
+
+                  <Button type="submit" loading={isSaving}>
+                    Save Firecrawl Settings
+                  </Button>
+                </form>
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
 
         {/* Custom Fields */}
@@ -1296,6 +1692,27 @@ export default function CampaignSettingsPage() {
                       Configure AI agents to automatically score and classify your leads.
                     </CardDescription>
                   </div>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={generateAIScoringInstructions}
+                    >
+                      <Copy className="h-4 w-4 mr-1" />
+                      Copy JSON Instructions for AI
+                    </Button>
+                    <div className="relative">
+                      <input
+                        type="file"
+                        accept=".json,application/json"
+                        onChange={handleAIScoringJsonUpload}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                      />
+                      <Button variant="outline" size="sm">
+                        <Upload className="h-4 w-4 mr-1" />
+                        Upload JSON
+                      </Button>
+                    </div>
                   <Dialog open={isAddAIConfigOpen} onOpenChange={(open) => {
                     setIsAddAIConfigOpen(open);
                     if (!open) {
@@ -1528,9 +1945,9 @@ export default function CampaignSettingsPage() {
                               </Button>
                             </div>
                             
-                            {aiConfigForm.custom_outputs.length > 0 && (
+                            {aiConfigForm.custom_outputs?.length > 0 && (
                               <div className="space-y-2">
-                                {aiConfigForm.custom_outputs.map((output) => (
+                                {(aiConfigForm.custom_outputs || []).map((output) => (
                                   <div key={output.id} className="flex items-start justify-between p-3 border rounded-lg">
                                     <div className="flex-1">
                                       <div className="flex items-center gap-2">
@@ -1789,6 +2206,7 @@ export default function CampaignSettingsPage() {
                       </DialogFooter>
                     </DialogContent>
                   </Dialog>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent>

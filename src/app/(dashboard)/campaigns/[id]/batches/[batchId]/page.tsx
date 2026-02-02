@@ -76,8 +76,10 @@ import {
   Star,
   Sparkles,
   Loader2,
+  Copy,
 } from "lucide-react";
-import type { Campaign, Contact, Company, CustomField, ContactFieldValue, FunnelStage, ContactStage, Batch, AIScoringConfig } from "@/types";
+import type { Campaign, Contact, Company, CustomField, ContactFieldValue, FunnelStage, ContactStage, Batch, AIScoringConfig, FirecrawlPageType, FirecrawlUrls } from "@/types";
+import { Globe, AlertTriangle, Check } from "lucide-react";
 
 export default function BatchDetailPage() {
   const params = useParams();
@@ -121,6 +123,16 @@ export default function BatchDetailPage() {
     email: "",
     description: "",
   });
+
+  // Firecrawl URL mapping state
+  const [isMapping, setIsMapping] = useState(false);
+  const [mapResult, setMapResult] = useState<{
+    urls: FirecrawlUrls;
+    found: FirecrawlPageType[];
+    notFound: FirecrawlPageType[];
+  } | null>(null);
+  const [manualUrls, setManualUrls] = useState<Partial<FirecrawlUrls>>({});
+  const [showUrlPreview, setShowUrlPreview] = useState(false);
 
   // State for inline company creation during contact creation
   const [isCreatingNewCompany, setIsCreatingNewCompany] = useState(false);
@@ -281,15 +293,75 @@ export default function BatchDetailPage() {
     }
   };
 
-  // Leads: Add company handler
-  const handleAddCompany = async (e: React.FormEvent) => {
+  // Run Firecrawl mapping to discover URLs
+  const handleMapUrls = async () => {
+    if (!newCompany.website) return;
+
+    setIsMapping(true);
+    try {
+      const response = await fetch("/api/firecrawl/map", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          websiteUrl: newCompany.website,
+          pages: campaign?.firecrawl_pages || ["homepage", "about"],
+        }),
+      });
+
+      const data = await response.json();
+      if (!data.success) {
+        throw new Error(data.error || "Failed to map URLs");
+      }
+
+      setMapResult({
+        urls: data.urls,
+        found: data.found,
+        notFound: data.notFound,
+      });
+      setManualUrls({});
+      setShowUrlPreview(true);
+    } catch (error) {
+      console.error("Failed to map URLs:", error);
+      toast({
+        title: "URL Discovery Failed",
+        description: error instanceof Error ? error.message : "Failed to discover URLs. You can still save the company.",
+        variant: "destructive",
+      });
+      // Allow saving without URLs
+      setShowUrlPreview(true);
+      setMapResult({ urls: { homepage: newCompany.website }, found: ["homepage"], notFound: [] });
+    } finally {
+      setIsMapping(false);
+    }
+  };
+
+  // Handle form submission - either map URLs or save directly
+  const handleAddCompanySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCompany.name.trim()) return;
 
+    // If Firecrawl is enabled, has a website, and we haven't mapped yet, map first
+    if (campaign?.enable_firecrawl && newCompany.website && !showUrlPreview) {
+      await handleMapUrls();
+      return;
+    }
+
+    // Otherwise, save the company
+    await handleSaveCompany();
+  };
+
+  // Actually save the company (after URL preview or directly if Firecrawl disabled)
+  const handleSaveCompany = async () => {
     setIsCreating(true);
     try {
       const pb = getClientPB();
       const currentUser = getCurrentUser(pb);
+
+      // Merge discovered URLs with manual URLs
+      const firecrawlUrls = mapResult?.urls
+        ? { ...mapResult.urls, ...manualUrls }
+        : undefined;
+
       await createCompany(pb, {
         name: newCompany.name,
         website: newCompany.website,
@@ -299,6 +371,8 @@ export default function BatchDetailPage() {
         batch: batchId, // Auto-assign to this batch
         campaign: campaignId,
         created_by: currentUser?.id,
+        firecrawl_urls: firecrawlUrls,
+        firecrawl_mapped_at: firecrawlUrls ? new Date().toISOString() : undefined,
       });
 
       toast({
@@ -307,6 +381,7 @@ export default function BatchDetailPage() {
         variant: "success",
       });
 
+      // Reset all state
       setNewCompany({
         name: "",
         website: "",
@@ -314,6 +389,9 @@ export default function BatchDetailPage() {
         email: "",
         description: "",
       });
+      setMapResult(null);
+      setManualUrls({});
+      setShowUrlPreview(false);
       setIsAddCompanyOpen(false);
       loadData();
     } catch (error) {
@@ -325,6 +403,16 @@ export default function BatchDetailPage() {
       });
     } finally {
       setIsCreating(false);
+    }
+  };
+
+  // Reset Firecrawl state when dialog closes
+  const handleCompanyDialogClose = (open: boolean) => {
+    setIsAddCompanyOpen(open);
+    if (!open) {
+      setMapResult(null);
+      setManualUrls({});
+      setShowUrlPreview(false);
     }
   };
 
@@ -445,6 +533,54 @@ export default function BatchDetailPage() {
     }
   };
 
+  const handleCopyCompanyData = (company: Company) => {
+    // Build a formatted string with all company data (excluding people)
+    const lines: string[] = [];
+    
+    lines.push(`Company: ${company.name}`);
+    if (company.website) lines.push(`Website: ${company.website}`);
+    if (company.email) lines.push(`Email: ${company.email}`);
+    if (company.industry) lines.push(`Industry: ${company.industry}`);
+    if (company.description) lines.push(`Description: ${company.description}`);
+    
+    // AI Scoring data
+    if (company.ai_score !== undefined) {
+      lines.push("");
+      lines.push("--- AI Analysis ---");
+      lines.push(`Score: ${company.ai_score}${company.ai_confidence ? ` (${Math.round(company.ai_confidence * 100)}% confidence)` : ""}`);
+      if (company.ai_classification) lines.push(`Classification: ${company.ai_classification}`);
+      
+      // Add custom outputs from ai_data
+      if (company.ai_data && aiConfigs.length > 0 && aiConfigs[0].custom_outputs) {
+        for (const output of aiConfigs[0].custom_outputs) {
+          const value = company.ai_data[output.name];
+          if (value !== undefined && value !== null) {
+            if (typeof value === "object") {
+              lines.push(`${output.label}: ${JSON.stringify(value)}`);
+            } else {
+              lines.push(`${output.label}: ${value}`);
+            }
+          }
+        }
+      }
+      
+      // Add reasons if available
+      if (company.ai_reasons && company.ai_reasons.length > 0) {
+        lines.push("");
+        lines.push("Reasons:");
+        company.ai_reasons.forEach((reason, i) => {
+          lines.push(`  ${i + 1}. ${reason}`);
+        });
+      }
+    }
+    
+    navigator.clipboard.writeText(lines.join("\n"));
+    toast({
+      title: "Copied!",
+      description: "Company data copied to clipboard.",
+    });
+  };
+
   const getContactStageId = (contactId: string): string | undefined => {
     return contactStageMap.get(contactId);
   };
@@ -546,113 +682,201 @@ export default function BatchDetailPage() {
             </div>
           </div>
 
-          <Dialog open={isAddCompanyOpen} onOpenChange={setIsAddCompanyOpen}>
+          <Dialog open={isAddCompanyOpen} onOpenChange={handleCompanyDialogClose}>
             <DialogTrigger asChild>
               <Button>
                 <Plus className="mr-2 h-4 w-4" />
                 Add Company
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-2xl">
-              <form onSubmit={handleAddCompany}>
+            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+              <form onSubmit={handleAddCompanySubmit}>
                 <DialogHeader>
                   <DialogTitle>Add Company to {batch.name}</DialogTitle>
                   <DialogDescription>
                     Add a new lead company to this batch.
+                    {campaign?.enable_firecrawl && (
+                      <span className="flex items-center gap-1 mt-1 text-primary">
+                        <Globe className="h-3 w-3" />
+                        Website scraping is enabled for this campaign
+                      </span>
+                    )}
                   </DialogDescription>
                 </DialogHeader>
-                <div className="space-y-4 py-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="company_name">Company Name *</Label>
-                    <Input
-                      id="company_name"
-                      value={newCompany.name}
-                      onChange={(e) =>
-                        setNewCompany({ ...newCompany, name: e.target.value })
-                      }
-                      required
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
+                
+                {!showUrlPreview ? (
+                  /* Step 1: Basic company info */
+                  <div className="space-y-4 py-4">
                     <div className="space-y-2">
-                      <Label htmlFor="website">Website</Label>
+                      <Label htmlFor="company_name">Company Name *</Label>
                       <Input
-                        id="website"
-                        type="url"
-                        placeholder="https://example.com"
-                        value={newCompany.website}
+                        id="company_name"
+                        value={newCompany.name}
                         onChange={(e) =>
-                          setNewCompany({ ...newCompany, website: e.target.value })
+                          setNewCompany({ ...newCompany, name: e.target.value })
                         }
+                        required
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="website">Website</Label>
+                        <Input
+                          id="website"
+                          type="url"
+                          placeholder="https://example.com"
+                          value={newCompany.website}
+                          onChange={(e) =>
+                            setNewCompany({ ...newCompany, website: e.target.value })
+                          }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="email">Company Email</Label>
+                        <Input
+                          id="email"
+                          type="email"
+                          placeholder="sales@company.com"
+                          value={newCompany.email}
+                          onChange={(e) =>
+                            setNewCompany({ ...newCompany, email: e.target.value })
+                          }
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="description">Description</Label>
+                      <Textarea
+                        id="description"
+                        placeholder="Brief description of the company..."
+                        value={newCompany.description}
+                        onChange={(e) =>
+                          setNewCompany({ ...newCompany, description: e.target.value })
+                        }
+                        rows={3}
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="email">Company Email</Label>
-                      <Input
-                        id="email"
-                        type="email"
-                        placeholder="sales@company.com"
-                        value={newCompany.email}
-                        onChange={(e) =>
-                          setNewCompany({ ...newCompany, email: e.target.value })
-                        }
-                      />
+                      <Label htmlFor="industry">Industry</Label>
+                      {campaign?.industry_type === "dropdown" && campaign.industry_options?.length > 0 ? (
+                        <Select
+                          value={newCompany.industry}
+                          onValueChange={(value) =>
+                            setNewCompany({ ...newCompany, industry: value })
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select an industry" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {campaign.industry_options.map((option) => (
+                              <SelectItem key={option} value={option}>
+                                {option}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Input
+                          id="industry"
+                          placeholder="e.g., SaaS, Agency"
+                          value={newCompany.industry}
+                          onChange={(e) =>
+                            setNewCompany({ ...newCompany, industry: e.target.value })
+                          }
+                        />
+                      )}
                     </div>
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="description">Description</Label>
-                    <Textarea
-                      id="description"
-                      placeholder="Brief description of the company..."
-                      value={newCompany.description}
-                      onChange={(e) =>
-                        setNewCompany({ ...newCompany, description: e.target.value })
-                      }
-                      rows={3}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="industry">Industry</Label>
-                    {campaign?.industry_type === "dropdown" && campaign.industry_options?.length > 0 ? (
-                      <Select
-                        value={newCompany.industry}
-                        onValueChange={(value) =>
-                          setNewCompany({ ...newCompany, industry: value })
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select an industry" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {campaign.industry_options.map((option) => (
-                            <SelectItem key={option} value={option}>
-                              {option}
-                            </SelectItem>
+                ) : (
+                  /* Step 2: URL Preview (shown after mapping) */
+                  <div className="space-y-4 py-4">
+                    <div className="rounded-lg border p-4 bg-muted/50">
+                      <h4 className="font-medium flex items-center gap-2 mb-3">
+                        <Globe className="h-4 w-4" />
+                        Discovered URLs for {newCompany.name}
+                      </h4>
+                      
+                      {/* Found URLs */}
+                      {mapResult?.found && mapResult.found.length > 0 && (
+                        <div className="space-y-2 mb-4">
+                          <p className="text-sm text-muted-foreground">Found pages:</p>
+                          {mapResult.found.map((pageType) => (
+                            <div key={pageType} className="flex items-center gap-2 text-sm">
+                              <Check className="h-4 w-4 text-green-500" />
+                              <span className="capitalize font-medium">{pageType}:</span>
+                              <span className="text-muted-foreground truncate flex-1">
+                                {mapResult.urls[pageType]}
+                              </span>
+                            </div>
                           ))}
-                        </SelectContent>
-                      </Select>
-                    ) : (
-                      <Input
-                        id="industry"
-                        placeholder="e.g., SaaS, Agency"
-                        value={newCompany.industry}
-                        onChange={(e) =>
-                          setNewCompany({ ...newCompany, industry: e.target.value })
-                        }
-                      />
-                    )}
+                        </div>
+                      )}
+                      
+                      {/* Not Found URLs */}
+                      {mapResult?.notFound && mapResult.notFound.length > 0 && (
+                        <div className="space-y-3">
+                          <div className="flex items-center gap-2 text-sm text-amber-600">
+                            <AlertTriangle className="h-4 w-4" />
+                            <span>{mapResult.notFound.length} page(s) not found - you can add them manually:</span>
+                          </div>
+                          {mapResult.notFound.map((pageType) => (
+                            <div key={pageType} className="flex items-center gap-2">
+                              <span className="capitalize text-sm font-medium w-20">{pageType}:</span>
+                              <Input
+                                type="url"
+                                placeholder={`https://example.com/${pageType}`}
+                                value={manualUrls[pageType] || ""}
+                                onChange={(e) =>
+                                  setManualUrls({ ...manualUrls, [pageType]: e.target.value })
+                                }
+                                className="flex-1"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    
+                    <p className="text-xs text-muted-foreground">
+                      These URLs will be scraped when running AI scoring to provide richer context.
+                      You can proceed without all URLs - AI scoring will use whatever is available.
+                    </p>
                   </div>
-                </div>
+                )}
+                
                 <DialogFooter>
+                  {showUrlPreview && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => setShowUrlPreview(false)}
+                    >
+                      Back
+                    </Button>
+                  )}
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={() => setIsAddCompanyOpen(false)}
+                    onClick={() => handleCompanyDialogClose(false)}
                   >
                     Cancel
                   </Button>
-                  <Button type="submit" disabled={isCreating}>
-                    {isCreating ? "Adding..." : "Add Company"}
+                  <Button type="submit" disabled={isCreating || isMapping}>
+                    {isMapping ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Discovering URLs...
+                      </>
+                    ) : isCreating ? (
+                      "Adding..."
+                    ) : showUrlPreview ? (
+                      "Save Company"
+                    ) : campaign?.enable_firecrawl && newCompany.website ? (
+                      "Discover URLs & Continue"
+                    ) : (
+                      "Add Company"
+                    )}
                   </Button>
                 </DialogFooter>
               </form>
@@ -665,16 +889,18 @@ export default function BatchDetailPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Company</TableHead>
-                <TableHead>Website</TableHead>
-                <TableHead>Email</TableHead>
-                <TableHead>People</TableHead>
-                <TableHead>AI Score</TableHead>
-                <TableHead>Classification</TableHead>
+                <TableHead className="min-w-[160px]">Company</TableHead>
+                <TableHead className="min-w-[160px]">Website</TableHead>
+                <TableHead className="min-w-[160px]">Email</TableHead>
+                <TableHead className="text-center">People</TableHead>
+                <TableHead>Score</TableHead>
+                <TableHead>Class</TableHead>
                 {aiConfigs.length > 0 && aiConfigs[0].custom_outputs?.map((output) => (
-                  <TableHead key={output.id}>{output.label}</TableHead>
+                  <TableHead key={output.id} className="min-w-[100px] text-xs" title={output.label}>
+                    <span className="truncate block max-w-[120px]">{output.label}</span>
+                  </TableHead>
                 ))}
-                <TableHead className="w-32">Actions</TableHead>
+                <TableHead className="w-[140px] text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -692,44 +918,49 @@ export default function BatchDetailPage() {
                   return (
                     <Fragment key={company.id}>
                       <TableRow className="bg-slate-50 dark:bg-slate-900/50">
-                        <TableCell className="font-medium">
+                        <TableCell className="font-medium max-w-[180px]">
                           <Link 
                             href={`/campaigns/${campaignId}/companies/${company.id}`}
                             className="flex items-center gap-2 hover:text-primary hover:underline"
                           >
-                            <FileText className="h-4 w-4 text-muted-foreground" />
-                            {company.name}
+                            <FileText className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                            <span className="truncate" title={company.name}>{company.name}</span>
                           </Link>
                           {company.description && (
-                            <p className="text-xs text-muted-foreground mt-1 line-clamp-1">
+                            <p className="text-xs text-muted-foreground mt-1 truncate" title={company.description}>
                               {company.description}
                             </p>
                           )}
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="max-w-[180px]">
                           {company.website ? (
                             <a
-                              href={company.website}
+                              href={company.website.startsWith('http') ? company.website : `https://${company.website}`}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-primary hover:underline flex items-center gap-1"
+                              className="text-primary hover:underline flex items-center gap-1 truncate"
+                              title={company.website}
                             >
-                              {company.website}
-                              <ExternalLink className="h-3 w-3" />
+                              <span className="truncate">{company.website.replace(/^https?:\/\/(www\.)?/, '')}</span>
+                              <ExternalLink className="h-3 w-3 flex-shrink-0" />
                             </a>
                           ) : (
-                            "-"
+                            <span className="text-muted-foreground">-</span>
                           )}
                         </TableCell>
-                        <TableCell>{company.email || "-"}</TableCell>
-                        <TableCell>
+                        <TableCell className="max-w-[180px]">
+                          <span className="truncate block" title={company.email || undefined}>
+                            {company.email || <span className="text-muted-foreground">-</span>}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-center">
                           <Badge variant="secondary">{people.length}</Badge>
                         </TableCell>
                         <TableCell>
                           {company.ai_score !== undefined ? (
-                            <div className="flex items-center gap-2">
-                              <Star className="h-4 w-4 text-amber-500 fill-amber-500" />
-                              <span className="font-medium">{company.ai_score}</span>
+                            <div className="flex items-center gap-1.5">
+                              <Star className="h-4 w-4 text-amber-500 fill-amber-500 flex-shrink-0" />
+                              <span className="font-semibold">{company.ai_score}</span>
                               {company.ai_confidence && (
                                 <span className="text-xs text-muted-foreground">
                                   ({Math.round(company.ai_confidence * 100)}%)
@@ -737,53 +968,88 @@ export default function BatchDetailPage() {
                               )}
                             </div>
                           ) : (
-                            <span className="text-muted-foreground text-sm">Not scored</span>
+                            <span className="text-muted-foreground text-xs">-</span>
                           )}
                         </TableCell>
                         <TableCell>
                           {company.ai_classification ? (
-                            <Badge>{company.ai_classification}</Badge>
+                            <Badge className="truncate max-w-[100px]" title={company.ai_classification}>
+                              {company.ai_classification}
+                            </Badge>
                           ) : (
-                            "-"
+                            <span className="text-muted-foreground">-</span>
                           )}
                         </TableCell>
+                        {/* Dynamic custom output cells - read from ai_data JSON */}
                         {aiConfigs.length > 0 && aiConfigs[0].custom_outputs?.map((output) => {
-                          const fieldName = `ai_custom_${output.name}`;
-                          const value = (company as Record<string, unknown>)[fieldName];
+                          // Read from ai_data JSON object instead of separate fields
+                          const value = company.ai_data?.[output.name];
+                          const stringValue = value !== undefined && value !== null 
+                            ? (typeof value === "object" ? JSON.stringify(value) : String(value))
+                            : null;
                           return (
-                            <TableCell key={output.id}>
-                              {value !== undefined && value !== null ? (
+                            <TableCell key={output.id} className="max-w-[140px]">
+                              {stringValue !== null ? (
                                 output.type === "boolean" ? (
-                                  <Badge variant={value === "true" ? "default" : value === "false" ? "secondary" : "outline"}>
-                                    {String(value)}
+                                  <Badge 
+                                    variant={value === "true" || value === true ? "default" : value === "false" || value === false ? "secondary" : "outline"}
+                                    className="text-xs"
+                                  >
+                                    {value === true || value === "true" ? "Yes" : value === false || value === "false" ? "No" : stringValue}
                                   </Badge>
+                                ) : output.type === "nested_json" ? (
+                                  <div 
+                                    className="text-xs bg-muted px-2 py-1 rounded truncate cursor-help" 
+                                    title={JSON.stringify(value, null, 2)}
+                                  >
+                                    {Array.isArray(value) ? value.join(", ") : stringValue}
+                                  </div>
+                                ) : output.type === "list" ? (
+                                  <Badge variant="outline" className="text-xs truncate max-w-[120px]" title={stringValue}>
+                                    {stringValue}
+                                  </Badge>
+                                ) : output.type === "number" ? (
+                                  <span className="text-sm font-medium">{stringValue}</span>
                                 ) : (
-                                  <span className="text-sm">{String(value)}</span>
+                                  <span 
+                                    className="text-sm truncate block max-w-[120px]" 
+                                    title={stringValue}
+                                  >
+                                    {stringValue}
+                                  </span>
                                 )
                               ) : (
-                                <span className="text-muted-foreground text-sm">-</span>
+                                <span className="text-muted-foreground text-xs">-</span>
                               )}
                             </TableCell>
                           );
                         })}
-                        <TableCell>
-                          <div className="flex items-center gap-1">
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              onClick={() => handleCopyCompanyData(company)}
+                              title="Copy company data"
+                            >
+                              <Copy className="h-3.5 w-3.5" />
+                            </Button>
                             {aiConfigs.length > 0 && (
                               <Button
-                                variant="outline"
+                                variant={company.ai_score !== undefined ? "ghost" : "default"}
                                 size="sm"
+                                className="h-7 px-2 text-xs"
                                 onClick={() => handleScoreLead(company.id)}
                                 disabled={scoringCompanyId === company.id}
+                                title={company.ai_score !== undefined ? "Re-run AI scoring" : "Run AI scoring"}
                               >
                                 {scoringCompanyId === company.id ? (
-                                  <>
-                                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                                    Running...
-                                  </>
+                                  <Loader2 className="h-3 w-3 animate-spin" />
                                 ) : (
                                   <>
                                     <Sparkles className="h-3 w-3 mr-1" />
-                                    Run AI
+                                    {company.ai_score !== undefined ? "Re-run" : "Score"}
                                   </>
                                 )}
                               </Button>

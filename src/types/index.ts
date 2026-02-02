@@ -26,6 +26,9 @@ export interface AppSetting extends BaseRecord {
 export type IndustryType = 'text' | 'dropdown';
 export type CampaignKind = 'leads' | 'outreach';
 
+// Firecrawl page types that can be scraped
+export type FirecrawlPageType = 'homepage' | 'about' | 'pricing' | 'careers' | 'blog' | 'products' | 'services' | 'contact';
+
 export interface Campaign extends BaseRecord {
   user: string;
   name: string;
@@ -34,10 +37,37 @@ export interface Campaign extends BaseRecord {
   industry_type: IndustryType;
   industry_options: string[]; // For dropdown type
   ai_opener_prompt?: string; // System prompt for generating AI openers (outreach campaigns)
+  // Firecrawl settings (for leads campaigns)
+  enable_firecrawl?: boolean; // Enable website scraping
+  firecrawl_pages?: FirecrawlPageType[]; // Which pages to scrape
   // Expanded relations
   expand?: {
     user?: User;
   };
+}
+
+// Firecrawl discovered URLs for a company
+export interface FirecrawlUrls {
+  homepage?: string;
+  about?: string;
+  pricing?: string;
+  careers?: string;
+  blog?: string;
+  products?: string;
+  services?: string;
+  contact?: string;
+}
+
+// Cached scraped content from Firecrawl
+export interface FirecrawlContent {
+  homepage?: string;
+  about?: string;
+  pricing?: string;
+  careers?: string;
+  blog?: string;
+  products?: string;
+  services?: string;
+  contact?: string;
 }
 
 export interface Company extends BaseRecord {
@@ -57,6 +87,11 @@ export interface Company extends BaseRecord {
   ai_scored_at?: string;
   ai_config_version?: string;
   ai_data?: Record<string, unknown>; // Full AI response JSON
+  // Firecrawl fields (for website scraping)
+  firecrawl_urls?: FirecrawlUrls; // Discovered URLs for each page type
+  firecrawl_content?: FirecrawlContent; // Cached scraped content
+  firecrawl_mapped_at?: string; // When URLs were discovered
+  firecrawl_scraped_at?: string; // When content was last scraped
   // Custom output fields (dynamically added based on AI config)
   [key: `ai_custom_${string}`]: unknown; // e.g., ai_custom_industry_fit, ai_custom_tags, etc.
   // Expanded relations
