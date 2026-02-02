@@ -1,0 +1,664 @@
+[
+  {
+    "name": "campaigns",
+    "type": "base",
+    "schema": [
+      {
+        "name": "user",
+        "type": "relation",
+        "required": true,
+        "options": {
+          "collectionId": "_pb_users_auth_",
+          "cascadeDelete": false,
+          "minSelect": null,
+          "maxSelect": 1,
+          "displayFields": ["email"]
+        }
+      },
+      {
+        "name": "name",
+        "type": "text",
+        "required": true,
+        "options": {
+          "min": 1,
+          "max": 200,
+          "pattern": ""
+        }
+      },
+      {
+        "name": "description",
+        "type": "text",
+        "required": false,
+        "options": {
+          "min": null,
+          "max": 2000,
+          "pattern": ""
+        }
+      }
+    ],
+    "listRule": "@request.auth.id != \"\" && user = @request.auth.id",
+    "viewRule": "@request.auth.id != \"\" && user = @request.auth.id",
+    "createRule": "@request.auth.id != \"\"",
+    "updateRule": "@request.auth.id != \"\" && user = @request.auth.id",
+    "deleteRule": "@request.auth.id != \"\" && user = @request.auth.id"
+  },
+  {
+    "name": "companies",
+    "type": "base",
+    "schema": [
+      {
+        "name": "campaign",
+        "type": "relation",
+        "required": true,
+        "options": {
+          "collectionId": "campaigns",
+          "cascadeDelete": true,
+          "minSelect": null,
+          "maxSelect": 1,
+          "displayFields": ["name"]
+        }
+      },
+      {
+        "name": "name",
+        "type": "text",
+        "required": true,
+        "options": {
+          "min": 1,
+          "max": 200,
+          "pattern": ""
+        }
+      },
+      {
+        "name": "website",
+        "type": "url",
+        "required": false,
+        "options": {
+          "exceptDomains": [],
+          "onlyDomains": []
+        }
+      },
+      {
+        "name": "industry",
+        "type": "text",
+        "required": false,
+        "options": {
+          "min": null,
+          "max": 100,
+          "pattern": ""
+        }
+      }
+    ],
+    "listRule": "@request.auth.id != \"\" && campaign.user = @request.auth.id",
+    "viewRule": "@request.auth.id != \"\" && campaign.user = @request.auth.id",
+    "createRule": "@request.auth.id != \"\" && @request.data.campaign.user = @request.auth.id",
+    "updateRule": "@request.auth.id != \"\" && campaign.user = @request.auth.id",
+    "deleteRule": "@request.auth.id != \"\" && campaign.user = @request.auth.id"
+  },
+  {
+    "name": "contacts",
+    "type": "base",
+    "schema": [
+      {
+        "name": "company",
+        "type": "relation",
+        "required": false,
+        "options": {
+          "collectionId": "companies",
+          "cascadeDelete": false,
+          "minSelect": null,
+          "maxSelect": 1,
+          "displayFields": ["name"]
+        }
+      },
+      {
+        "name": "campaign",
+        "type": "relation",
+        "required": true,
+        "options": {
+          "collectionId": "campaigns",
+          "cascadeDelete": true,
+          "minSelect": null,
+          "maxSelect": 1,
+          "displayFields": ["name"]
+        }
+      },
+      {
+        "name": "email",
+        "type": "email",
+        "required": true,
+        "options": {
+          "exceptDomains": [],
+          "onlyDomains": []
+        }
+      },
+      {
+        "name": "first_name",
+        "type": "text",
+        "required": false,
+        "options": {
+          "min": null,
+          "max": 100,
+          "pattern": ""
+        }
+      },
+      {
+        "name": "last_name",
+        "type": "text",
+        "required": false,
+        "options": {
+          "min": null,
+          "max": 100,
+          "pattern": ""
+        }
+      },
+      {
+        "name": "title",
+        "type": "text",
+        "required": false,
+        "options": {
+          "min": null,
+          "max": 100,
+          "pattern": ""
+        }
+      }
+    ],
+    "listRule": "@request.auth.id != \"\" && campaign.user = @request.auth.id",
+    "viewRule": "@request.auth.id != \"\" && campaign.user = @request.auth.id",
+    "createRule": "@request.auth.id != \"\" && @request.data.campaign.user = @request.auth.id",
+    "updateRule": "@request.auth.id != \"\" && campaign.user = @request.auth.id",
+    "deleteRule": "@request.auth.id != \"\" && campaign.user = @request.auth.id"
+  },
+  {
+    "name": "custom_fields",
+    "type": "base",
+    "schema": [
+      {
+        "name": "campaign",
+        "type": "relation",
+        "required": true,
+        "options": {
+          "collectionId": "campaigns",
+          "cascadeDelete": true,
+          "minSelect": null,
+          "maxSelect": 1,
+          "displayFields": ["name"]
+        }
+      },
+      {
+        "name": "name",
+        "type": "text",
+        "required": true,
+        "options": {
+          "min": 1,
+          "max": 100,
+          "pattern": ""
+        }
+      },
+      {
+        "name": "field_type",
+        "type": "select",
+        "required": true,
+        "options": {
+          "maxSelect": 1,
+          "values": ["text", "number", "boolean", "select"]
+        }
+      },
+      {
+        "name": "options",
+        "type": "json",
+        "required": false,
+        "options": {}
+      },
+      {
+        "name": "order",
+        "type": "number",
+        "required": false,
+        "options": {
+          "min": 0,
+          "max": null
+        }
+      }
+    ],
+    "listRule": "@request.auth.id != \"\" && campaign.user = @request.auth.id",
+    "viewRule": "@request.auth.id != \"\" && campaign.user = @request.auth.id",
+    "createRule": "@request.auth.id != \"\" && @request.data.campaign.user = @request.auth.id",
+    "updateRule": "@request.auth.id != \"\" && campaign.user = @request.auth.id",
+    "deleteRule": "@request.auth.id != \"\" && campaign.user = @request.auth.id"
+  },
+  {
+    "name": "contact_field_values",
+    "type": "base",
+    "schema": [
+      {
+        "name": "contact",
+        "type": "relation",
+        "required": true,
+        "options": {
+          "collectionId": "contacts",
+          "cascadeDelete": true,
+          "minSelect": null,
+          "maxSelect": 1,
+          "displayFields": ["email"]
+        }
+      },
+      {
+        "name": "custom_field",
+        "type": "relation",
+        "required": true,
+        "options": {
+          "collectionId": "custom_fields",
+          "cascadeDelete": true,
+          "minSelect": null,
+          "maxSelect": 1,
+          "displayFields": ["name"]
+        }
+      },
+      {
+        "name": "value",
+        "type": "text",
+        "required": false,
+        "options": {
+          "min": null,
+          "max": 5000,
+          "pattern": ""
+        }
+      }
+    ],
+    "listRule": "@request.auth.id != \"\" && contact.campaign.user = @request.auth.id",
+    "viewRule": "@request.auth.id != \"\" && contact.campaign.user = @request.auth.id",
+    "createRule": "@request.auth.id != \"\"",
+    "updateRule": "@request.auth.id != \"\" && contact.campaign.user = @request.auth.id",
+    "deleteRule": "@request.auth.id != \"\" && contact.campaign.user = @request.auth.id"
+  },
+  {
+    "name": "email_template_groups",
+    "type": "base",
+    "schema": [
+      {
+        "name": "campaign",
+        "type": "relation",
+        "required": true,
+        "options": {
+          "collectionId": "campaigns",
+          "cascadeDelete": true,
+          "minSelect": null,
+          "maxSelect": 1,
+          "displayFields": ["name"]
+        }
+      },
+      {
+        "name": "name",
+        "type": "text",
+        "required": true,
+        "options": {
+          "min": 1,
+          "max": 200,
+          "pattern": ""
+        }
+      }
+    ],
+    "listRule": "@request.auth.id != \"\" && campaign.user = @request.auth.id",
+    "viewRule": "@request.auth.id != \"\" && campaign.user = @request.auth.id",
+    "createRule": "@request.auth.id != \"\" && @request.data.campaign.user = @request.auth.id",
+    "updateRule": "@request.auth.id != \"\" && campaign.user = @request.auth.id",
+    "deleteRule": "@request.auth.id != \"\" && campaign.user = @request.auth.id"
+  },
+  {
+    "name": "email_templates",
+    "type": "base",
+    "schema": [
+      {
+        "name": "group",
+        "type": "relation",
+        "required": true,
+        "options": {
+          "collectionId": "email_template_groups",
+          "cascadeDelete": true,
+          "minSelect": null,
+          "maxSelect": 1,
+          "displayFields": ["name"]
+        }
+      },
+      {
+        "name": "subject",
+        "type": "text",
+        "required": true,
+        "options": {
+          "min": 1,
+          "max": 500,
+          "pattern": ""
+        }
+      },
+      {
+        "name": "body",
+        "type": "text",
+        "required": true,
+        "options": {
+          "min": 1,
+          "max": 50000,
+          "pattern": ""
+        }
+      },
+      {
+        "name": "is_active",
+        "type": "bool",
+        "required": false,
+        "options": {}
+      }
+    ],
+    "listRule": "@request.auth.id != \"\" && group.campaign.user = @request.auth.id",
+    "viewRule": "@request.auth.id != \"\" && group.campaign.user = @request.auth.id",
+    "createRule": "@request.auth.id != \"\"",
+    "updateRule": "@request.auth.id != \"\" && group.campaign.user = @request.auth.id",
+    "deleteRule": "@request.auth.id != \"\" && group.campaign.user = @request.auth.id"
+  },
+  {
+    "name": "email_sends",
+    "type": "base",
+    "schema": [
+      {
+        "name": "contact",
+        "type": "relation",
+        "required": true,
+        "options": {
+          "collectionId": "contacts",
+          "cascadeDelete": false,
+          "minSelect": null,
+          "maxSelect": 1,
+          "displayFields": ["email"]
+        }
+      },
+      {
+        "name": "template",
+        "type": "relation",
+        "required": true,
+        "options": {
+          "collectionId": "email_templates",
+          "cascadeDelete": false,
+          "minSelect": null,
+          "maxSelect": 1,
+          "displayFields": ["subject"]
+        }
+      },
+      {
+        "name": "campaign",
+        "type": "relation",
+        "required": true,
+        "options": {
+          "collectionId": "campaigns",
+          "cascadeDelete": false,
+          "minSelect": null,
+          "maxSelect": 1,
+          "displayFields": ["name"]
+        }
+      },
+      {
+        "name": "resend_id",
+        "type": "text",
+        "required": false,
+        "options": {
+          "min": null,
+          "max": 100,
+          "pattern": ""
+        }
+      },
+      {
+        "name": "status",
+        "type": "select",
+        "required": true,
+        "options": {
+          "maxSelect": 1,
+          "values": ["pending", "sent", "delivered", "opened", "clicked", "bounced", "failed"]
+        }
+      },
+      {
+        "name": "sent_at",
+        "type": "date",
+        "required": false,
+        "options": {
+          "min": "",
+          "max": ""
+        }
+      },
+      {
+        "name": "delivered_at",
+        "type": "date",
+        "required": false,
+        "options": {
+          "min": "",
+          "max": ""
+        }
+      },
+      {
+        "name": "opened_at",
+        "type": "date",
+        "required": false,
+        "options": {
+          "min": "",
+          "max": ""
+        }
+      },
+      {
+        "name": "clicked_at",
+        "type": "date",
+        "required": false,
+        "options": {
+          "min": "",
+          "max": ""
+        }
+      },
+      {
+        "name": "bounced_at",
+        "type": "date",
+        "required": false,
+        "options": {
+          "min": "",
+          "max": ""
+        }
+      },
+      {
+        "name": "error_message",
+        "type": "text",
+        "required": false,
+        "options": {
+          "min": null,
+          "max": 1000,
+          "pattern": ""
+        }
+      }
+    ],
+    "listRule": "@request.auth.id != \"\" && campaign.user = @request.auth.id",
+    "viewRule": "@request.auth.id != \"\" && campaign.user = @request.auth.id",
+    "createRule": "@request.auth.id != \"\"",
+    "updateRule": "@request.auth.id != \"\" && campaign.user = @request.auth.id",
+    "deleteRule": "@request.auth.id != \"\" && campaign.user = @request.auth.id"
+  },
+  {
+    "name": "funnel_stages",
+    "type": "base",
+    "schema": [
+      {
+        "name": "campaign",
+        "type": "relation",
+        "required": true,
+        "options": {
+          "collectionId": "campaigns",
+          "cascadeDelete": true,
+          "minSelect": null,
+          "maxSelect": 1,
+          "displayFields": ["name"]
+        }
+      },
+      {
+        "name": "name",
+        "type": "text",
+        "required": true,
+        "options": {
+          "min": 1,
+          "max": 100,
+          "pattern": ""
+        }
+      },
+      {
+        "name": "order",
+        "type": "number",
+        "required": false,
+        "options": {
+          "min": 0,
+          "max": null
+        }
+      },
+      {
+        "name": "color",
+        "type": "text",
+        "required": false,
+        "options": {
+          "min": null,
+          "max": 20,
+          "pattern": ""
+        }
+      }
+    ],
+    "listRule": "@request.auth.id != \"\" && campaign.user = @request.auth.id",
+    "viewRule": "@request.auth.id != \"\" && campaign.user = @request.auth.id",
+    "createRule": "@request.auth.id != \"\" && @request.data.campaign.user = @request.auth.id",
+    "updateRule": "@request.auth.id != \"\" && campaign.user = @request.auth.id",
+    "deleteRule": "@request.auth.id != \"\" && campaign.user = @request.auth.id"
+  },
+  {
+    "name": "contact_stages",
+    "type": "base",
+    "schema": [
+      {
+        "name": "contact",
+        "type": "relation",
+        "required": true,
+        "options": {
+          "collectionId": "contacts",
+          "cascadeDelete": true,
+          "minSelect": null,
+          "maxSelect": 1,
+          "displayFields": ["email"]
+        }
+      },
+      {
+        "name": "stage",
+        "type": "relation",
+        "required": true,
+        "options": {
+          "collectionId": "funnel_stages",
+          "cascadeDelete": true,
+          "minSelect": null,
+          "maxSelect": 1,
+          "displayFields": ["name"]
+        }
+      },
+      {
+        "name": "moved_at",
+        "type": "date",
+        "required": false,
+        "options": {
+          "min": "",
+          "max": ""
+        }
+      }
+    ],
+    "listRule": "@request.auth.id != \"\" && contact.campaign.user = @request.auth.id",
+    "viewRule": "@request.auth.id != \"\" && contact.campaign.user = @request.auth.id",
+    "createRule": "@request.auth.id != \"\"",
+    "updateRule": "@request.auth.id != \"\" && contact.campaign.user = @request.auth.id",
+    "deleteRule": "@request.auth.id != \"\" && contact.campaign.user = @request.auth.id"
+  },
+  {
+    "name": "follow_up_sequences",
+    "type": "base",
+    "schema": [
+      {
+        "name": "campaign",
+        "type": "relation",
+        "required": true,
+        "options": {
+          "collectionId": "campaigns",
+          "cascadeDelete": true,
+          "minSelect": null,
+          "maxSelect": 1,
+          "displayFields": ["name"]
+        }
+      },
+      {
+        "name": "name",
+        "type": "text",
+        "required": true,
+        "options": {
+          "min": 1,
+          "max": 200,
+          "pattern": ""
+        }
+      },
+      {
+        "name": "is_active",
+        "type": "bool",
+        "required": false,
+        "options": {}
+      }
+    ],
+    "listRule": "@request.auth.id != \"\" && campaign.user = @request.auth.id",
+    "viewRule": "@request.auth.id != \"\" && campaign.user = @request.auth.id",
+    "createRule": "@request.auth.id != \"\" && @request.data.campaign.user = @request.auth.id",
+    "updateRule": "@request.auth.id != \"\" && campaign.user = @request.auth.id",
+    "deleteRule": "@request.auth.id != \"\" && campaign.user = @request.auth.id"
+  },
+  {
+    "name": "follow_up_steps",
+    "type": "base",
+    "schema": [
+      {
+        "name": "sequence",
+        "type": "relation",
+        "required": true,
+        "options": {
+          "collectionId": "follow_up_sequences",
+          "cascadeDelete": true,
+          "minSelect": null,
+          "maxSelect": 1,
+          "displayFields": ["name"]
+        }
+      },
+      {
+        "name": "template_group",
+        "type": "relation",
+        "required": true,
+        "options": {
+          "collectionId": "email_template_groups",
+          "cascadeDelete": false,
+          "minSelect": null,
+          "maxSelect": 1,
+          "displayFields": ["name"]
+        }
+      },
+      {
+        "name": "delay_days",
+        "type": "number",
+        "required": true,
+        "options": {
+          "min": 1,
+          "max": 365
+        }
+      },
+      {
+        "name": "order",
+        "type": "number",
+        "required": false,
+        "options": {
+          "min": 0,
+          "max": null
+        }
+      }
+    ],
+    "listRule": "@request.auth.id != \"\" && sequence.campaign.user = @request.auth.id",
+    "viewRule": "@request.auth.id != \"\" && sequence.campaign.user = @request.auth.id",
+    "createRule": "@request.auth.id != \"\"",
+    "updateRule": "@request.auth.id != \"\" && sequence.campaign.user = @request.auth.id",
+    "deleteRule": "@request.auth.id != \"\" && sequence.campaign.user = @request.auth.id"
+  }
+]

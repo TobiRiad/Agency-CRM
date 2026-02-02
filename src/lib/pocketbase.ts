@@ -17,6 +17,7 @@ import type {
   AIScoringConfig,
   CustomOutputField,
   CampaignKind,
+  FirecrawlUrls,
 } from '@/types';
 
 const POCKETBASE_URL = process.env.NEXT_PUBLIC_POCKETBASE_URL || 'http://localhost:8090';
@@ -213,6 +214,8 @@ export async function createCompany(pb: PocketBase, data: {
   description?: string;
   batch?: string;
   created_by?: string;
+  firecrawl_urls?: FirecrawlUrls;
+  firecrawl_mapped_at?: string;
 }): Promise<Company> {
   return pb.collection('companies').create<Company>(data);
 }
