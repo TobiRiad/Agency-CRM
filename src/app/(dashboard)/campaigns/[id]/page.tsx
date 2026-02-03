@@ -204,7 +204,7 @@ export default function CampaignPage() {
     try {
       const pb = getClientPB();
       const campaignData = await getCampaign(pb, campaignId);
-      
+
       // Load batches for all campaign types
       const batchesPromise = getBatches(pb, campaignId);
 
@@ -314,9 +314,9 @@ export default function CampaignPage() {
     setIsCreating(true);
     try {
       const pb = getClientPB();
-      
+
       let companyId = newContact.company;
-      
+
       // If creating a new company inline, create it first
       if (isCreatingNewCompany && inlineNewCompany.name.trim()) {
         const currentUser = getCurrentUser(pb);
@@ -329,7 +329,7 @@ export default function CampaignPage() {
         });
         companyId = newCompanyData.id;
       }
-      
+
       const currentUser = getCurrentUser(pb);
       await createContact(pb, {
         email: newContact.email,
@@ -344,7 +344,7 @@ export default function CampaignPage() {
 
       toast({
         title: "Contact added",
-        description: isCreatingNewCompany && inlineNewCompany.name.trim() 
+        description: isCreatingNewCompany && inlineNewCompany.name.trim()
           ? "Contact and company have been added to your campaign."
           : "The contact has been added to your campaign.",
         variant: "success",
@@ -387,11 +387,11 @@ export default function CampaignPage() {
   // Check for duplicate companies by website or name
   const checkForDuplicates = async (): Promise<Company | null> => {
     const pb = getClientPB();
-    
+
     // Check by website domain if provided
     if (newCompany.website) {
       const domain = extractDomain(newCompany.website);
-      
+
       for (const company of companies) {
         if (company.website) {
           const existingDomain = extractDomain(company.website);
@@ -401,7 +401,7 @@ export default function CampaignPage() {
         }
       }
     }
-    
+
     // Check by exact name match (case-insensitive)
     const nameLower = newCompany.name.toLowerCase().trim();
     for (const company of companies) {
@@ -409,7 +409,7 @@ export default function CampaignPage() {
         return company;
       }
     }
-    
+
     return null;
   };
 
@@ -417,13 +417,13 @@ export default function CampaignPage() {
   const handleProceedWithDuplicate = async () => {
     setShowDuplicateWarning(false);
     setDuplicateCompany(null);
-    
+
     // If Firecrawl is enabled, has a website, and we haven't mapped yet, map first
     if (campaign?.enable_firecrawl && newCompany.website && !showUrlPreview) {
       await handleMapUrls();
       return;
     }
-    
+
     // Otherwise save directly
     await handleSaveCompany();
   };
@@ -793,20 +793,20 @@ export default function CampaignPage() {
   const handleCopyCompanyData = (company: Company) => {
     // Build a formatted string with all company data (excluding people)
     const lines: string[] = [];
-    
+
     lines.push(`Company: ${company.name}`);
     if (company.website) lines.push(`Website: ${company.website}`);
     if (company.email) lines.push(`Email: ${company.email}`);
     if (company.industry) lines.push(`Industry: ${company.industry}`);
     if (company.description) lines.push(`Description: ${company.description}`);
-    
+
     // AI Scoring data
     if (company.ai_score !== undefined) {
       lines.push("");
       lines.push("--- AI Analysis ---");
       lines.push(`Score: ${company.ai_score}${company.ai_confidence ? ` (${Math.round(company.ai_confidence * 100)}% confidence)` : ""}`);
       if (company.ai_classification) lines.push(`Classification: ${company.ai_classification}`);
-      
+
       // Add custom outputs from ai_data
       if (company.ai_data && aiConfigs.length > 0 && aiConfigs[0].custom_outputs) {
         for (const output of aiConfigs[0].custom_outputs) {
@@ -820,7 +820,7 @@ export default function CampaignPage() {
           }
         }
       }
-      
+
       // Add reasons if available
       if (company.ai_reasons && company.ai_reasons.length > 0) {
         lines.push("");
@@ -830,7 +830,7 @@ export default function CampaignPage() {
         });
       }
     }
-    
+
     navigator.clipboard.writeText(lines.join("\n"));
     toast({
       title: "Copied!",
@@ -852,8 +852,8 @@ export default function CampaignPage() {
     try {
       const pb = getClientPB();
       const createdContacts = await pushCompanyToOutreach(
-        pb, 
-        companyId, 
+        pb,
+        companyId,
         selectedOutreachCampaign,
         selectedFunnelStage || undefined,
         selectedBatch || undefined
@@ -1160,7 +1160,7 @@ export default function CampaignPage() {
                       )}
                     </DialogDescription>
                   </DialogHeader>
-                  
+
                   {/* Duplicate Warning */}
                   {showDuplicateWarning && duplicateCompany && (
                     <div className="my-4 p-4 border border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800 rounded-lg">
@@ -1329,7 +1329,7 @@ export default function CampaignPage() {
                             )}
                           </Label>
                         </div>
-                        
+
                         {/* List of added people */}
                         {newCompanyPeople.length > 0 && (
                           <div className="space-y-2">
@@ -1431,7 +1431,7 @@ export default function CampaignPage() {
                           <Globe className="h-4 w-4" />
                           Discovered URLs for {newCompany.name}
                         </h4>
-                        
+
                         {/* Found URLs */}
                         {mapResult?.found && mapResult.found.length > 0 && (
                           <div className="space-y-2 mb-4">
@@ -1447,7 +1447,7 @@ export default function CampaignPage() {
                             ))}
                           </div>
                         )}
-                        
+
                         {/* Not Found URLs */}
                         {mapResult?.notFound && mapResult.notFound.length > 0 && (
                           <div className="space-y-3">
@@ -1472,14 +1472,14 @@ export default function CampaignPage() {
                           </div>
                         )}
                       </div>
-                      
+
                       <p className="text-xs text-muted-foreground">
                         These URLs will be scraped when running AI scoring to provide richer context.
                         You can proceed without all URLs - AI scoring will use whatever is available.
                       </p>
                     </div>
                   ) : null}
-                  
+
                   {!showDuplicateWarning && (
                     <DialogFooter>
                       {showUrlPreview && (
@@ -1644,7 +1644,7 @@ export default function CampaignPage() {
               {filteredCompanies.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={9 + (aiConfigs[0]?.custom_outputs?.length || 0)} className="text-center py-12 text-muted-foreground">
-                    {batchFilter !== "all" 
+                    {batchFilter !== "all"
                       ? "No companies match your filter"
                       : "No lead companies yet. Add your first company to get started."}
                   </TableCell>
@@ -1658,7 +1658,7 @@ export default function CampaignPage() {
                     <Fragment key={company.id}>
                       <TableRow className="bg-slate-50 dark:bg-slate-900/50">
                         <TableCell className="font-medium max-w-[160px]">
-                          <Link 
+                          <Link
                             href={`/campaigns/${campaignId}/companies/${company.id}`}
                             className="flex items-center gap-2 hover:text-primary hover:underline"
                           >
@@ -1668,7 +1668,7 @@ export default function CampaignPage() {
                         </TableCell>
                         <TableCell className="max-w-[180px]">
                           {company.description ? (
-                            <p 
+                            <p
                               className="text-sm text-muted-foreground truncate"
                               title={company.description}
                             >
@@ -1739,22 +1739,22 @@ export default function CampaignPage() {
                         {aiConfigs.length > 0 && aiConfigs[0].custom_outputs?.map((output) => {
                           // Read from ai_data JSON object instead of separate fields
                           const value = company.ai_data?.[output.name];
-                          const stringValue = value !== undefined && value !== null 
+                          const stringValue = value !== undefined && value !== null
                             ? (typeof value === "object" ? JSON.stringify(value) : String(value))
                             : null;
                           return (
                             <TableCell key={output.id} className="max-w-[140px]">
                               {stringValue !== null ? (
                                 output.type === "boolean" ? (
-                                  <Badge 
+                                  <Badge
                                     variant={value === "true" || value === true ? "default" : value === "false" || value === false ? "secondary" : "outline"}
                                     className="text-xs"
                                   >
                                     {value === true || value === "true" ? "Yes" : value === false || value === "false" ? "No" : stringValue}
                                   </Badge>
                                 ) : output.type === "nested_json" ? (
-                                  <div 
-                                    className="text-xs bg-muted px-2 py-1 rounded truncate cursor-help" 
+                                  <div
+                                    className="text-xs bg-muted px-2 py-1 rounded truncate cursor-help"
                                     title={JSON.stringify(value, null, 2)}
                                   >
                                     {Array.isArray(value) ? value.join(", ") : stringValue}
@@ -1766,8 +1766,8 @@ export default function CampaignPage() {
                                 ) : output.type === "number" ? (
                                   <span className="text-sm font-medium">{stringValue}</span>
                                 ) : (
-                                  <span 
-                                    className="text-sm truncate block max-w-[120px]" 
+                                  <span
+                                    className="text-sm truncate block max-w-[120px]"
                                     title={stringValue}
                                   >
                                     {stringValue}
@@ -1822,18 +1822,33 @@ export default function CampaignPage() {
                               </Button>
                             )}
                             <Button
-                              variant="outline"
+                              variant={company.pushed_to_campaigns?.length ? "secondary" : "outline"}
                               size="sm"
-                              className="h-7 px-2 text-xs"
+                              className={`h-7 px-2 text-xs ${company.pushed_to_campaigns?.length ? "border-green-500/50" : ""}`}
                               onClick={() => {
                                 setPushingCompanyId(company.id);
                                 setIsPushDialogOpen(true);
                               }}
                               disabled={!canPush || pushingCompanyId === company.id}
-                              title="Push to outreach campaign"
+                              title={
+                                company.pushed_to_campaigns?.length
+                                  ? `Already pushed to: ${company.pushed_to_campaigns
+                                    .map(id => outreachCampaigns.find(c => c.id === id)?.name || id)
+                                    .join(", ")}`
+                                  : "Push to outreach campaign"
+                              }
                             >
-                              <ArrowRight className="h-3 w-3 mr-1" />
-                              Push
+                              {company.pushed_to_campaigns?.length ? (
+                                <>
+                                  <Check className="h-3 w-3 mr-1 text-green-500" />
+                                  Pushed ({company.pushed_to_campaigns.length})
+                                </>
+                              ) : (
+                                <>
+                                  <ArrowRight className="h-3 w-3 mr-1" />
+                                  Push
+                                </>
+                              )}
                             </Button>
                             <Button
                               variant="ghost"
@@ -1991,16 +2006,25 @@ export default function CampaignPage() {
                     <SelectValue placeholder="Select outreach campaign..." />
                   </SelectTrigger>
                   <SelectContent>
-                    {outreachCampaigns.length === 0 ? (
+                    {outreachCampaigns.filter(c => c.id).length === 0 ? (
                       <SelectItem value="__none__" disabled>
                         No outreach campaigns available
                       </SelectItem>
                     ) : (
-                      outreachCampaigns.map((camp) => (
-                        <SelectItem key={camp.id} value={camp.id}>
-                          {camp.name}
-                        </SelectItem>
-                      ))
+                      outreachCampaigns
+                        .filter((camp) => camp.id) // Filter out campaigns with empty IDs
+                        .map((camp) => {
+                          const isPushed = pushingCompanyId &&
+                            companies.find(c => c.id === pushingCompanyId)?.pushed_to_campaigns?.includes(camp.id);
+                          return (
+                            <SelectItem key={camp.id} value={camp.id}>
+                              <span className="flex items-center gap-2">
+                                {camp.name}
+                                {isPushed && <Check className="h-3 w-3 text-green-500" />}
+                              </span>
+                            </SelectItem>
+                          );
+                        })
                     )}
                   </SelectContent>
                 </Select>
@@ -2008,6 +2032,17 @@ export default function CampaignPage() {
 
               {selectedOutreachCampaign && (
                 <>
+                  {/* Warning if already pushed to this campaign */}
+                  {pushingCompanyId &&
+                    companies.find(c => c.id === pushingCompanyId)?.pushed_to_campaigns?.includes(selectedOutreachCampaign) && (
+                      <div className="flex items-center gap-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400">
+                        <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+                        <p className="text-sm">
+                          This company was already pushed to this campaign. Pushing again will only create contacts that don&apos;t exist yet.
+                        </p>
+                      </div>
+                    )}
+
                   {outreachCampaignFunnelStages.length > 0 && (
                     <div className="space-y-2">
                       <Label htmlFor="funnel_stage">Funnel Stage (Optional)</Label>

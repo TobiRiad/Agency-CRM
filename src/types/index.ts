@@ -107,6 +107,8 @@ export interface Company extends BaseRecord {
   firecrawl_content?: FirecrawlContent; // Cached scraped content
   firecrawl_mapped_at?: string; // When URLs were discovered
   firecrawl_scraped_at?: string; // When content was last scraped
+  // Tracking for pushed companies (leads -> outreach)
+  pushed_to_campaigns?: string[]; // Array of outreach campaign IDs this company has been pushed to
   // Custom output fields (dynamically added based on AI config)
   [key: `ai_custom_${string}`]: unknown; // e.g., ai_custom_industry_fit, ai_custom_tags, etc.
   // Expanded relations

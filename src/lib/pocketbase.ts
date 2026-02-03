@@ -41,10 +41,10 @@ export function getClientPB(): PocketBase {
   if (typeof window === 'undefined') {
     throw new Error('getClientPB should only be called on the client side');
   }
-  
+
   if (!clientPB) {
     clientPB = createPocketBase();
-    
+
     // Load auth from localStorage
     const authData = localStorage.getItem('pocketbase_auth');
     if (authData) {
@@ -56,7 +56,7 @@ export function getClientPB(): PocketBase {
         localStorage.removeItem('pocketbase_auth');
       }
     }
-    
+
     // Save auth changes to localStorage
     clientPB.authStore.onChange((token, model) => {
       if (token && model) {
@@ -66,7 +66,7 @@ export function getClientPB(): PocketBase {
       }
     });
   }
-  
+
   return clientPB;
 }
 
@@ -144,7 +144,7 @@ export async function getCampaign(pb: PocketBase, id: string): Promise<Campaign>
 export async function createCampaign(pb: PocketBase, data: { name: string; description: string; user: string; kind?: CampaignKind }): Promise<Campaign> {
   // Create the campaign
   const campaign = await pb.collection('campaigns').create<Campaign>(data);
-  
+
   // Auto-create "Uncategorized" funnel stage only for outreach campaigns
   if (!data.kind || data.kind === 'outreach') {
     await pb.collection('funnel_stages').create({
@@ -154,7 +154,7 @@ export async function createCampaign(pb: PocketBase, data: { name: string; descr
       campaign: campaign.id,
     });
   }
-  
+
   return campaign;
 }
 
@@ -205,11 +205,11 @@ export async function getOutreachCampaigns(pb: PocketBase, userId: string): Prom
   return result.items;
 }
 
-export async function createCompany(pb: PocketBase, data: { 
-  name: string; 
-  website: string; 
-  industry: string; 
-  campaign: string; 
+export async function createCompany(pb: PocketBase, data: {
+  name: string;
+  website: string;
+  industry: string;
+  campaign: string;
   email?: string;
   description?: string;
   batch?: string;
@@ -321,7 +321,7 @@ export async function createContact(pb: PocketBase, data: {
 }): Promise<Contact> {
   // Create the contact
   const contact = await pb.collection('contacts').create<Contact>(data);
-  
+
   // Auto-assign to "Uncategorized" funnel stage
   try {
     const uncategorizedStage = await getOrCreateUncategorizedStage(pb, data.campaign);
@@ -333,7 +333,7 @@ export async function createContact(pb: PocketBase, data: {
   } catch (e) {
     console.error('Failed to assign contact to Uncategorized stage:', e);
   }
-  
+
   return contact;
 }
 
@@ -360,6 +360,43 @@ export async function updateContact(pb: PocketBase, id: string, data: Partial<Co
 }
 
 export async function deleteContact(pb: PocketBase, id: string): Promise<boolean> {
+  // First, delete related contact_stages (required relation blocks direct delete)
+  try {
+    const contactStages = await pb.collection('contact_stages').getList(1, 100, {
+      filter: pb.filter('contact = {:contactId}', { contactId: id }),
+    });
+    for (const stage of contactStages.items) {
+      await pb.collection('contact_stages').delete(stage.id);
+    }
+  } catch (e) {
+    console.error('Failed to delete contact stages:', e);
+  }
+
+  // Delete related contact_field_values
+  try {
+    const fieldValues = await pb.collection('contact_field_values').getList(1, 100, {
+      filter: pb.filter('contact = {:contactId}', { contactId: id }),
+    });
+    for (const value of fieldValues.items) {
+      await pb.collection('contact_field_values').delete(value.id);
+    }
+  } catch (e) {
+    console.error('Failed to delete contact field values:', e);
+  }
+
+  // Delete related email_sends
+  try {
+    const emailSends = await pb.collection('email_sends').getList(1, 100, {
+      filter: pb.filter('contact = {:contactId}', { contactId: id }),
+    });
+    for (const send of emailSends.items) {
+      await pb.collection('email_sends').delete(send.id);
+    }
+  } catch (e) {
+    console.error('Failed to delete email sends:', e);
+  }
+
+  // Now delete the contact
   return pb.collection('contacts').delete(id);
 }
 
@@ -374,20 +411,20 @@ export async function bulkCreateContacts(pb: PocketBase, contacts: Array<{
   created_by?: string;
 }>): Promise<Contact[]> {
   const results: Contact[] = [];
-  
+
   // Group contacts by campaign to efficiently get uncategorized stages
   const campaignIds = Array.from(new Set(contacts.map(c => c.campaign)));
   const uncategorizedStages = new Map<string, FunnelStage>();
-  
+
   for (const campaignId of campaignIds) {
     const stage = await getOrCreateUncategorizedStage(pb, campaignId);
     uncategorizedStages.set(campaignId, stage);
   }
-  
+
   for (const contact of contacts) {
     const created = await pb.collection('contacts').create<Contact>(contact);
     results.push(created);
-    
+
     // Auto-assign to "Uncategorized" stage
     const uncategorizedStage = uncategorizedStages.get(contact.campaign);
     if (uncategorizedStage) {
@@ -728,8 +765,14 @@ export async function pushCompanyToOutreach(
           title: leadContact.title,
           source_company: leadCompanyId,
           source_contact: leadContact.id,
+          batch: batchId || undefined,
         });
         createdContacts.push(outreachContact);
+
+        // Set funnel stage if provided
+        if (funnelStageId) {
+          await setContactStage(pb, outreachContact.id, funnelStageId);
+        }
       }
     }
   } else {
@@ -760,6 +803,16 @@ export async function pushCompanyToOutreach(
           await setContactStage(pb, outreachContact.id, funnelStageId);
         }
       }
+    }
+  }
+
+  // Track which campaigns this company has been pushed to
+  if (createdContacts.length > 0) {
+    const existingPushedTo = leadCompany.pushed_to_campaigns || [];
+    if (!existingPushedTo.includes(outreachCampaignId)) {
+      await pb.collection('companies').update(leadCompanyId, {
+        pushed_to_campaigns: [...existingPushedTo, outreachCampaignId],
+      });
     }
   }
 
