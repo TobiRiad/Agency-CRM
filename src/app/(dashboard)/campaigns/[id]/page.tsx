@@ -162,6 +162,10 @@ export default function CampaignPage() {
   const [manualUrls, setManualUrls] = useState<Partial<FirecrawlUrls>>({});
   const [showUrlPreview, setShowUrlPreview] = useState(false);
 
+  // State for duplicate company check
+  const [duplicateCompany, setDuplicateCompany] = useState<Company | null>(null);
+  const [showDuplicateWarning, setShowDuplicateWarning] = useState(false);
+
   // Leads-specific state
   const [companyContacts, setCompanyContacts] = useState<Map<string, Contact[]>>(new Map());
   const [aiConfigs, setAiConfigs] = useState<AIScoringConfig[]>([]);
@@ -370,6 +374,60 @@ export default function CampaignPage() {
     }
   };
 
+  // Extract domain from URL for duplicate checking
+  const extractDomain = (url: string): string => {
+    try {
+      const urlObj = new URL(url.startsWith('http') ? url : `https://${url}`);
+      return urlObj.hostname.replace(/^www\./, '');
+    } catch {
+      return url.toLowerCase();
+    }
+  };
+
+  // Check for duplicate companies by website or name
+  const checkForDuplicates = async (): Promise<Company | null> => {
+    const pb = getClientPB();
+    
+    // Check by website domain if provided
+    if (newCompany.website) {
+      const domain = extractDomain(newCompany.website);
+      
+      for (const company of companies) {
+        if (company.website) {
+          const existingDomain = extractDomain(company.website);
+          if (domain === existingDomain) {
+            return company;
+          }
+        }
+      }
+    }
+    
+    // Check by exact name match (case-insensitive)
+    const nameLower = newCompany.name.toLowerCase().trim();
+    for (const company of companies) {
+      if (company.name.toLowerCase().trim() === nameLower) {
+        return company;
+      }
+    }
+    
+    return null;
+  };
+
+  // Handle proceeding despite duplicate warning
+  const handleProceedWithDuplicate = async () => {
+    setShowDuplicateWarning(false);
+    setDuplicateCompany(null);
+    
+    // If Firecrawl is enabled, has a website, and we haven't mapped yet, map first
+    if (campaign?.enable_firecrawl && newCompany.website && !showUrlPreview) {
+      await handleMapUrls();
+      return;
+    }
+    
+    // Otherwise save directly
+    await handleSaveCompany();
+  };
+
   // Run Firecrawl mapping to discover URLs
   const handleMapUrls = async () => {
     if (!newCompany.website) return;
@@ -416,6 +474,16 @@ export default function CampaignPage() {
   const handleAddCompanySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCompany.name.trim()) return;
+
+    // Check for duplicates first (only if not already showing duplicate warning)
+    if (!showDuplicateWarning) {
+      const duplicate = await checkForDuplicates();
+      if (duplicate) {
+        setDuplicateCompany(duplicate);
+        setShowDuplicateWarning(true);
+        return;
+      }
+    }
 
     // If Firecrawl is enabled, has a website, and we haven't mapped yet, map first
     if (campaign?.enable_firecrawl && newCompany.website && !showUrlPreview) {
@@ -516,6 +584,8 @@ export default function CampaignPage() {
       setMapResult(null);
       setManualUrls({});
       setShowUrlPreview(false);
+      setShowDuplicateWarning(false);
+      setDuplicateCompany(null);
       setNewCompanyPeople([]);
       setNewPersonInput({ email: "", first_name: "", last_name: "", title: "" });
     }
@@ -1091,7 +1161,56 @@ export default function CampaignPage() {
                     </DialogDescription>
                   </DialogHeader>
                   
-                  {!showUrlPreview ? (
+                  {/* Duplicate Warning */}
+                  {showDuplicateWarning && duplicateCompany && (
+                    <div className="my-4 p-4 border border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800 rounded-lg">
+                      <div className="flex items-start gap-3">
+                        <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                        <div className="flex-1 space-y-2">
+                          <p className="font-medium text-amber-800 dark:text-amber-200">
+                            Possible duplicate found
+                          </p>
+                          <p className="text-sm text-amber-700 dark:text-amber-300">
+                            A company with a similar name or website already exists:
+                          </p>
+                          <div className="p-2 bg-white dark:bg-slate-800 rounded border text-sm">
+                            <p className="font-medium">{duplicateCompany.name}</p>
+                            {duplicateCompany.website && (
+                              <p className="text-muted-foreground">{duplicateCompany.website}</p>
+                            )}
+                            {duplicateCompany.expand?.batch && (
+                              <p className="text-xs text-muted-foreground mt-1">
+                                In batch: {duplicateCompany.expand.batch.name}
+                              </p>
+                            )}
+                          </div>
+                          <div className="flex gap-2 pt-2">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setShowDuplicateWarning(false);
+                                setDuplicateCompany(null);
+                              }}
+                            >
+                              Edit Details
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="default"
+                              size="sm"
+                              onClick={handleProceedWithDuplicate}
+                            >
+                              Add Anyway
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {!showUrlPreview && !showDuplicateWarning ? (
                     /* Step 1: Basic company info */
                     <div className="space-y-4 py-4">
                       <div className="space-y-2">
@@ -1304,7 +1423,7 @@ export default function CampaignPage() {
                         </div>
                       </div>
                     </div>
-                  ) : (
+                  ) : showUrlPreview && !showDuplicateWarning ? (
                     /* Step 2: URL Preview (shown after mapping) */
                     <div className="space-y-4 py-4">
                       <div className="rounded-lg border p-4 bg-muted/50">
@@ -1359,42 +1478,44 @@ export default function CampaignPage() {
                         You can proceed without all URLs - AI scoring will use whatever is available.
                       </p>
                     </div>
-                  )}
+                  ) : null}
                   
-                  <DialogFooter>
-                    {showUrlPreview && (
+                  {!showDuplicateWarning && (
+                    <DialogFooter>
+                      {showUrlPreview && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          onClick={() => setShowUrlPreview(false)}
+                        >
+                          Back
+                        </Button>
+                      )}
                       <Button
                         type="button"
-                        variant="ghost"
-                        onClick={() => setShowUrlPreview(false)}
+                        variant="outline"
+                        onClick={() => handleCompanyDialogClose(false)}
                       >
-                        Back
+                        Cancel
                       </Button>
-                    )}
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => handleCompanyDialogClose(false)}
-                    >
-                      Cancel
-                    </Button>
-                    <Button type="submit" disabled={isCreating || isMapping}>
-                      {isMapping ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Discovering URLs...
-                        </>
-                      ) : isCreating ? (
-                        "Adding..."
-                      ) : showUrlPreview ? (
-                        "Save Company"
-                      ) : campaign?.enable_firecrawl && newCompany.website ? (
-                        "Discover URLs & Continue"
-                      ) : (
-                        "Add Company"
-                      )}
-                    </Button>
-                  </DialogFooter>
+                      <Button type="submit" disabled={isCreating || isMapping}>
+                        {isMapping ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Discovering URLs...
+                          </>
+                        ) : isCreating ? (
+                          "Adding..."
+                        ) : showUrlPreview ? (
+                          "Save Company"
+                        ) : campaign?.enable_firecrawl && newCompany.website ? (
+                          "Discover URLs & Continue"
+                        ) : (
+                          "Add Company"
+                        )}
+                      </Button>
+                    </DialogFooter>
+                  )}
                 </form>
               </DialogContent>
             </Dialog>
