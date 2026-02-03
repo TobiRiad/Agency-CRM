@@ -137,6 +137,21 @@ export default function CampaignPage() {
     batch: "",
   });
 
+  // People to add with new company
+  const [newCompanyPeople, setNewCompanyPeople] = useState<Array<{
+    id: string;
+    email: string;
+    first_name: string;
+    last_name: string;
+    title: string;
+  }>>([]);
+  const [newPersonInput, setNewPersonInput] = useState({
+    email: "",
+    first_name: "",
+    last_name: "",
+    title: "",
+  });
+
   // Firecrawl URL mapping state
   const [isMapping, setIsMapping] = useState(false);
   const [mapResult, setMapResult] = useState<{
@@ -424,7 +439,7 @@ export default function CampaignPage() {
         ? { ...mapResult.urls, ...manualUrls }
         : undefined;
 
-      await createCompany(pb, {
+      const newCompanyRecord = await createCompany(pb, {
         name: newCompany.name,
         website: newCompany.website,
         industry: newCompany.industry,
@@ -437,9 +452,32 @@ export default function CampaignPage() {
         firecrawl_mapped_at: firecrawlUrls ? new Date().toISOString() : undefined,
       });
 
+      // Create people if any were added
+      let peopleCreated = 0;
+      if (newCompanyPeople.length > 0) {
+        for (const person of newCompanyPeople) {
+          try {
+            await createContact(pb, {
+              email: person.email,
+              first_name: person.first_name,
+              last_name: person.last_name,
+              title: person.title,
+              company: newCompanyRecord.id,
+              campaign: campaignId,
+              created_by: currentUser?.id,
+            });
+            peopleCreated++;
+          } catch (err) {
+            console.error("Failed to create person:", err);
+          }
+        }
+      }
+
       toast({
         title: "Company added",
-        description: "The company has been added to your campaign.",
+        description: peopleCreated > 0
+          ? `Company added with ${peopleCreated} contact(s).`
+          : "The company has been added to your campaign.",
         variant: "success",
       });
 
@@ -452,6 +490,8 @@ export default function CampaignPage() {
         description: "",
         batch: "",
       });
+      setNewCompanyPeople([]);
+      setNewPersonInput({ email: "", first_name: "", last_name: "", title: "" });
       setMapResult(null);
       setManualUrls({});
       setShowUrlPreview(false);
@@ -476,7 +516,24 @@ export default function CampaignPage() {
       setMapResult(null);
       setManualUrls({});
       setShowUrlPreview(false);
+      setNewCompanyPeople([]);
+      setNewPersonInput({ email: "", first_name: "", last_name: "", title: "" });
     }
+  };
+
+  // Add person to the list (for new company)
+  const handleAddPersonToList = () => {
+    if (!newPersonInput.email.trim()) return;
+    setNewCompanyPeople([
+      ...newCompanyPeople,
+      { ...newPersonInput, id: crypto.randomUUID() },
+    ]);
+    setNewPersonInput({ email: "", first_name: "", last_name: "", title: "" });
+  };
+
+  // Remove person from the list
+  const handleRemovePersonFromList = (id: string) => {
+    setNewCompanyPeople(newCompanyPeople.filter((p) => p.id !== id));
   };
 
   const handleAddBatch = async (e: React.FormEvent) => {
@@ -1140,6 +1197,112 @@ export default function CampaignPage() {
                           </Select>
                         </div>
                       )}
+
+                      {/* People Section */}
+                      <div className="space-y-3 pt-4 border-t">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-base font-medium">
+                            People
+                            {newCompanyPeople.length > 0 && (
+                              <Badge variant="secondary" className="ml-2">
+                                {newCompanyPeople.length}
+                              </Badge>
+                            )}
+                          </Label>
+                        </div>
+                        
+                        {/* List of added people */}
+                        {newCompanyPeople.length > 0 && (
+                          <div className="space-y-2">
+                            {newCompanyPeople.map((person) => (
+                              <div
+                                key={person.id}
+                                className="flex items-center justify-between p-2 rounded-md bg-muted/50 text-sm"
+                              >
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <Users className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                                  <span className="truncate">
+                                    {person.first_name || person.last_name
+                                      ? `${person.first_name} ${person.last_name}`.trim()
+                                      : person.email}
+                                  </span>
+                                  {(person.first_name || person.last_name) && (
+                                    <span className="text-muted-foreground truncate">
+                                      ({person.email})
+                                    </span>
+                                  )}
+                                  {person.title && (
+                                    <span className="text-muted-foreground">
+                                      · {person.title}
+                                    </span>
+                                  )}
+                                </div>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-6 w-6 text-destructive hover:text-destructive flex-shrink-0"
+                                  onClick={() => handleRemovePersonFromList(person.id)}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Add person form */}
+                        <div className="space-y-2 p-3 rounded-md border bg-muted/30">
+                          <div className="grid grid-cols-2 gap-2">
+                            <Input
+                              placeholder="First name"
+                              value={newPersonInput.first_name}
+                              onChange={(e) =>
+                                setNewPersonInput({ ...newPersonInput, first_name: e.target.value })
+                              }
+                              className="h-8 text-sm"
+                            />
+                            <Input
+                              placeholder="Last name"
+                              value={newPersonInput.last_name}
+                              onChange={(e) =>
+                                setNewPersonInput({ ...newPersonInput, last_name: e.target.value })
+                              }
+                              className="h-8 text-sm"
+                            />
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <Input
+                              type="email"
+                              placeholder="Email *"
+                              value={newPersonInput.email}
+                              onChange={(e) =>
+                                setNewPersonInput({ ...newPersonInput, email: e.target.value })
+                              }
+                              className="h-8 text-sm"
+                            />
+                            <Input
+                              placeholder="Title (optional)"
+                              value={newPersonInput.title}
+                              onChange={(e) =>
+                                setNewPersonInput({ ...newPersonInput, title: e.target.value })
+                              }
+                              className="h-8 text-sm"
+                            />
+                          </div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="w-full h-8"
+                            onClick={handleAddPersonToList}
+                            disabled={!newPersonInput.email.trim()}
+                          >
+                            <Plus className="h-3.5 w-3.5 mr-1" />
+                            Add Person
+                          </Button>
+                        </div>
+                      </div>
                     </div>
                   ) : (
                     /* Step 2: URL Preview (shown after mapping) */
