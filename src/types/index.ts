@@ -16,6 +16,21 @@ export interface User extends BaseRecord {
   role?: UserRole;
 }
 
+export interface Invite extends BaseRecord {
+  email: string;
+  token: string;
+  used: boolean;
+  used_at?: string;
+  used_by?: string;
+  expires_at?: string;
+  created_by?: string;
+  // Expanded relations
+  expand?: {
+    used_by?: User;
+    created_by?: User;
+  };
+}
+
 export type EmailProvider = 'resend' | 'gmail';
 
 export interface AppSetting extends BaseRecord {

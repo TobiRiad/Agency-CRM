@@ -534,6 +534,48 @@ export default function CampaignPage() {
     }
   };
 
+  // Start editing a contact (leads campaign)
+  const handleStartEditContact = (contact: Contact) => {
+    setEditingContactId(contact.id);
+    setEditingContact({
+      first_name: contact.first_name || "",
+      last_name: contact.last_name || "",
+      email: contact.email || "",
+      title: contact.title || "",
+    });
+  };
+
+  // Cancel editing
+  const handleCancelEditContact = () => {
+    setEditingContactId(null);
+    setEditingContact({});
+  };
+
+  // Save edited contact
+  const handleSaveEditContact = async () => {
+    if (!editingContactId) return;
+
+    try {
+      const pb = getClientPB();
+      await updateContact(pb, editingContactId, editingContact);
+      toast({
+        title: "Contact updated",
+        description: "The contact has been updated successfully.",
+        variant: "success",
+      });
+      setEditingContactId(null);
+      setEditingContact({});
+      loadData();
+    } catch (error) {
+      console.error("Failed to update contact:", error);
+      toast({
+        title: "Error",
+        description: "Failed to update contact. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
       setSelectedContacts(new Set(filteredContacts.map((c) => c.id)));
@@ -1483,24 +1525,113 @@ export default function CampaignPage() {
                       {/* People under company */}
                       {people.length > 0 && people.map((person) => (
                         <TableRow key={person.id} className="bg-white dark:bg-slate-800">
-                          <TableCell className="pl-8">
-                            <div className="flex items-center gap-2">
-                              <Users className="h-3 w-3 text-muted-foreground" />
-                              <span className="text-sm">
-                                {person.first_name} {person.last_name}
-                              </span>
-                            </div>
-                          </TableCell>
-                          <TableCell colSpan={2}>
-                            <div className="flex items-center gap-2 text-sm">
-                              <Mail className="h-3 w-3 text-muted-foreground" />
-                              {person.email}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <span className="text-sm text-muted-foreground">{person.title || "-"}</span>
-                          </TableCell>
-                          <TableCell colSpan={3}></TableCell>
+                          {editingContactId === person.id ? (
+                            // Edit mode
+                            <>
+                              <TableCell className="pl-8">
+                                <div className="flex items-center gap-2">
+                                  <Users className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                                  <Input
+                                    value={editingContact.first_name || ""}
+                                    onChange={(e) => setEditingContact({ ...editingContact, first_name: e.target.value })}
+                                    placeholder="First name"
+                                    className="h-7 text-sm w-20"
+                                  />
+                                  <Input
+                                    value={editingContact.last_name || ""}
+                                    onChange={(e) => setEditingContact({ ...editingContact, last_name: e.target.value })}
+                                    placeholder="Last name"
+                                    className="h-7 text-sm w-20"
+                                  />
+                                </div>
+                              </TableCell>
+                              <TableCell colSpan={2}>
+                                <div className="flex items-center gap-2">
+                                  <Mail className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                                  <Input
+                                    value={editingContact.email || ""}
+                                    onChange={(e) => setEditingContact({ ...editingContact, email: e.target.value })}
+                                    placeholder="Email"
+                                    type="email"
+                                    className="h-7 text-sm"
+                                  />
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <Input
+                                  value={editingContact.title || ""}
+                                  onChange={(e) => setEditingContact({ ...editingContact, title: e.target.value })}
+                                  placeholder="Title"
+                                  className="h-7 text-sm"
+                                />
+                              </TableCell>
+                              <TableCell colSpan={3 + (aiConfigs[0]?.custom_outputs?.length || 0)}>
+                                <div className="flex items-center gap-1">
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-7 px-2 text-xs"
+                                    onClick={handleSaveEditContact}
+                                  >
+                                    Save
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-7 px-2 text-xs text-muted-foreground"
+                                    onClick={handleCancelEditContact}
+                                  >
+                                    Cancel
+                                  </Button>
+                                </div>
+                              </TableCell>
+                              <TableCell></TableCell>
+                            </>
+                          ) : (
+                            // Display mode
+                            <>
+                              <TableCell className="pl-8">
+                                <div className="flex items-center gap-2">
+                                  <Users className="h-3 w-3 text-muted-foreground" />
+                                  <span className="text-sm">
+                                    {person.first_name} {person.last_name}
+                                  </span>
+                                </div>
+                              </TableCell>
+                              <TableCell colSpan={2}>
+                                <div className="flex items-center gap-2 text-sm">
+                                  <Mail className="h-3 w-3 text-muted-foreground" />
+                                  {person.email}
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <span className="text-sm text-muted-foreground">{person.title || "-"}</span>
+                              </TableCell>
+                              <TableCell colSpan={3 + (aiConfigs[0]?.custom_outputs?.length || 0)}></TableCell>
+                              <TableCell className="text-right">
+                                <div className="flex items-center justify-end gap-1">
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-6 w-6"
+                                    onClick={() => handleStartEditContact(person)}
+                                    title="Edit contact"
+                                  >
+                                    <Edit className="h-3 w-3" />
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-6 w-6 text-destructive hover:text-destructive"
+                                    onClick={() => handleDeleteContact(person.id)}
+                                    title="Delete contact"
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </Button>
+                                </div>
+                              </TableCell>
+                            </>
+                          )}
                         </TableRow>
                       ))}
                     </Fragment>

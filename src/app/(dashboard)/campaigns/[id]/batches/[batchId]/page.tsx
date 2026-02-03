@@ -13,6 +13,7 @@ import {
   getCustomFields,
   getFieldValuesForContacts,
   createContact,
+  updateContact,
   deleteContact,
   createCompany,
   getFunnelStages,
@@ -140,6 +141,19 @@ export default function BatchDetailPage() {
     name: "",
     website: "",
     industry: "",
+  });
+
+  // State for duplicate company check
+  const [duplicateCompany, setDuplicateCompany] = useState<Company | null>(null);
+  const [showDuplicateWarning, setShowDuplicateWarning] = useState(false);
+
+  // State for inline contact editing
+  const [editingContactId, setEditingContactId] = useState<string | null>(null);
+  const [editingContactData, setEditingContactData] = useState({
+    first_name: "",
+    last_name: "",
+    email: "",
+    title: "",
   });
 
   const loadData = useCallback(async () => {
@@ -335,10 +349,63 @@ export default function BatchDetailPage() {
     }
   };
 
+  // Helper to extract domain from URL
+  const extractDomain = (url: string): string => {
+    try {
+      const urlObj = new URL(url.startsWith("http") ? url : `https://${url}`);
+      return urlObj.hostname.replace(/^www\./, "").toLowerCase();
+    } catch {
+      return url.toLowerCase();
+    }
+  };
+
+  // Check for duplicate companies by website or name
+  const checkForDuplicates = async (): Promise<Company | null> => {
+    const pb = getClientPB();
+    
+    // Check by website domain if provided
+    if (newCompany.website) {
+      const domain = extractDomain(newCompany.website);
+      // Search all companies in the campaign
+      const companiesList = await getCompanies(pb, campaignId);
+      
+      for (const company of companiesList) {
+        if (company.website) {
+          const existingDomain = extractDomain(company.website);
+          if (existingDomain === domain) {
+            return company;
+          }
+        }
+      }
+    }
+    
+    // Also check by similar name (case-insensitive exact match)
+    const nameLower = newCompany.name.trim().toLowerCase();
+    const companiesList = await getCompanies(pb, campaignId);
+    
+    for (const company of companiesList) {
+      if (company.name.toLowerCase() === nameLower) {
+        return company;
+      }
+    }
+    
+    return null;
+  };
+
   // Handle form submission - either map URLs or save directly
   const handleAddCompanySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCompany.name.trim()) return;
+
+    // Check for duplicates first (only if not already showing duplicate warning)
+    if (!showDuplicateWarning) {
+      const duplicate = await checkForDuplicates();
+      if (duplicate) {
+        setDuplicateCompany(duplicate);
+        setShowDuplicateWarning(true);
+        return;
+      }
+    }
 
     // If Firecrawl is enabled, has a website, and we haven't mapped yet, map first
     if (campaign?.enable_firecrawl && newCompany.website && !showUrlPreview) {
@@ -347,6 +414,20 @@ export default function BatchDetailPage() {
     }
 
     // Otherwise, save the company
+    await handleSaveCompany();
+  };
+
+  // Handle proceeding despite duplicate warning
+  const handleProceedWithDuplicate = async () => {
+    setShowDuplicateWarning(false);
+    setDuplicateCompany(null);
+    
+    // If Firecrawl is enabled, has a website, and we haven't mapped yet, map first
+    if (campaign?.enable_firecrawl && newCompany.website && !showUrlPreview) {
+      await handleMapUrls();
+      return;
+    }
+    
     await handleSaveCompany();
   };
 
@@ -392,6 +473,8 @@ export default function BatchDetailPage() {
       setMapResult(null);
       setManualUrls({});
       setShowUrlPreview(false);
+      setShowDuplicateWarning(false);
+      setDuplicateCompany(null);
       setIsAddCompanyOpen(false);
       loadData();
     } catch (error) {
@@ -413,6 +496,8 @@ export default function BatchDetailPage() {
       setMapResult(null);
       setManualUrls({});
       setShowUrlPreview(false);
+      setShowDuplicateWarning(false);
+      setDuplicateCompany(null);
     }
   };
 
@@ -434,6 +519,48 @@ export default function BatchDetailPage() {
       toast({
         title: "Error",
         description: "Failed to delete contact.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Start editing a contact
+  const handleStartEditContact = (contact: Contact) => {
+    setEditingContactId(contact.id);
+    setEditingContactData({
+      first_name: contact.first_name || "",
+      last_name: contact.last_name || "",
+      email: contact.email || "",
+      title: contact.title || "",
+    });
+  };
+
+  // Cancel editing
+  const handleCancelEditContact = () => {
+    setEditingContactId(null);
+    setEditingContactData({ first_name: "", last_name: "", email: "", title: "" });
+  };
+
+  // Save edited contact
+  const handleSaveEditContact = async () => {
+    if (!editingContactId) return;
+
+    try {
+      const pb = getClientPB();
+      await updateContact(pb, editingContactId, editingContactData);
+      toast({
+        title: "Contact updated",
+        description: "The contact has been updated successfully.",
+        variant: "success",
+      });
+      setEditingContactId(null);
+      setEditingContactData({ first_name: "", last_name: "", email: "", title: "" });
+      loadData();
+    } catch (error) {
+      console.error("Failed to update contact:", error);
+      toast({
+        title: "Error",
+        description: "Failed to update contact. Please try again.",
         variant: "destructive",
       });
     }
@@ -704,7 +831,56 @@ export default function BatchDetailPage() {
                   </DialogDescription>
                 </DialogHeader>
                 
-                {!showUrlPreview ? (
+                {/* Duplicate Warning */}
+                {showDuplicateWarning && duplicateCompany && (
+                  <div className="my-4 p-4 border border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800 rounded-lg">
+                    <div className="flex items-start gap-3">
+                      <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                      <div className="flex-1 space-y-2">
+                        <p className="font-medium text-amber-800 dark:text-amber-200">
+                          Possible duplicate found
+                        </p>
+                        <p className="text-sm text-amber-700 dark:text-amber-300">
+                          A company with a similar name or website already exists:
+                        </p>
+                        <div className="p-2 bg-white dark:bg-slate-800 rounded border text-sm">
+                          <p className="font-medium">{duplicateCompany.name}</p>
+                          {duplicateCompany.website && (
+                            <p className="text-muted-foreground">{duplicateCompany.website}</p>
+                          )}
+                          {duplicateCompany.expand?.batch && (
+                            <p className="text-xs text-muted-foreground mt-1">
+                              In batch: {duplicateCompany.expand.batch.name}
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex gap-2 pt-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setShowDuplicateWarning(false);
+                              setDuplicateCompany(null);
+                            }}
+                          >
+                            Edit Details
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="default"
+                            size="sm"
+                            onClick={handleProceedWithDuplicate}
+                          >
+                            Add Anyway
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {!showUrlPreview && !showDuplicateWarning ? (
                   /* Step 1: Basic company info */
                   <div className="space-y-4 py-4">
                     <div className="space-y-2">
@@ -788,7 +964,7 @@ export default function BatchDetailPage() {
                       )}
                     </div>
                   </div>
-                ) : (
+                ) : showUrlPreview && !showDuplicateWarning ? (
                   /* Step 2: URL Preview (shown after mapping) */
                   <div className="space-y-4 py-4">
                     <div className="rounded-lg border p-4 bg-muted/50">
@@ -843,42 +1019,44 @@ export default function BatchDetailPage() {
                       You can proceed without all URLs - AI scoring will use whatever is available.
                     </p>
                   </div>
-                )}
+                ) : null}
                 
-                <DialogFooter>
-                  {showUrlPreview && (
+                {!showDuplicateWarning && (
+                  <DialogFooter>
+                    {showUrlPreview && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={() => setShowUrlPreview(false)}
+                      >
+                        Back
+                      </Button>
+                    )}
                     <Button
                       type="button"
-                      variant="ghost"
-                      onClick={() => setShowUrlPreview(false)}
+                      variant="outline"
+                      onClick={() => handleCompanyDialogClose(false)}
                     >
-                      Back
+                      Cancel
                     </Button>
-                  )}
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => handleCompanyDialogClose(false)}
-                  >
-                    Cancel
-                  </Button>
-                  <Button type="submit" disabled={isCreating || isMapping}>
-                    {isMapping ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Discovering URLs...
-                      </>
-                    ) : isCreating ? (
-                      "Adding..."
-                    ) : showUrlPreview ? (
-                      "Save Company"
-                    ) : campaign?.enable_firecrawl && newCompany.website ? (
-                      "Discover URLs & Continue"
-                    ) : (
-                      "Add Company"
-                    )}
-                  </Button>
-                </DialogFooter>
+                    <Button type="submit" disabled={isCreating || isMapping}>
+                      {isMapping ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Discovering URLs...
+                        </>
+                      ) : isCreating ? (
+                        "Adding..."
+                      ) : showUrlPreview ? (
+                        "Save Company"
+                      ) : campaign?.enable_firecrawl && newCompany.website ? (
+                        "Discover URLs & Continue"
+                      ) : (
+                        "Add Company"
+                      )}
+                    </Button>
+                  </DialogFooter>
+                )}
               </form>
             </DialogContent>
           </Dialog>
@@ -1060,24 +1238,113 @@ export default function BatchDetailPage() {
                       {/* People under company */}
                       {people.length > 0 && people.map((person) => (
                         <TableRow key={person.id} className="bg-white dark:bg-slate-800">
-                          <TableCell className="pl-8">
-                            <div className="flex items-center gap-2">
-                              <Users className="h-3 w-3 text-muted-foreground" />
-                              <span className="text-sm">
-                                {person.first_name} {person.last_name}
-                              </span>
-                            </div>
-                          </TableCell>
-                          <TableCell colSpan={2}>
-                            <div className="flex items-center gap-2 text-sm">
-                              <Mail className="h-3 w-3 text-muted-foreground" />
-                              {person.email}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <span className="text-sm text-muted-foreground">{person.title || "-"}</span>
-                          </TableCell>
-                          <TableCell colSpan={3 + (aiConfigs[0]?.custom_outputs?.length || 0)}></TableCell>
+                          {editingContactId === person.id ? (
+                            // Edit mode
+                            <>
+                              <TableCell className="pl-8">
+                                <div className="flex items-center gap-2">
+                                  <Users className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                                  <Input
+                                    value={editingContactData.first_name}
+                                    onChange={(e) => setEditingContactData({ ...editingContactData, first_name: e.target.value })}
+                                    placeholder="First name"
+                                    className="h-7 text-sm w-20"
+                                  />
+                                  <Input
+                                    value={editingContactData.last_name}
+                                    onChange={(e) => setEditingContactData({ ...editingContactData, last_name: e.target.value })}
+                                    placeholder="Last name"
+                                    className="h-7 text-sm w-20"
+                                  />
+                                </div>
+                              </TableCell>
+                              <TableCell colSpan={2}>
+                                <div className="flex items-center gap-2">
+                                  <Mail className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                                  <Input
+                                    value={editingContactData.email}
+                                    onChange={(e) => setEditingContactData({ ...editingContactData, email: e.target.value })}
+                                    placeholder="Email"
+                                    type="email"
+                                    className="h-7 text-sm"
+                                  />
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <Input
+                                  value={editingContactData.title}
+                                  onChange={(e) => setEditingContactData({ ...editingContactData, title: e.target.value })}
+                                  placeholder="Title"
+                                  className="h-7 text-sm"
+                                />
+                              </TableCell>
+                              <TableCell colSpan={2 + (aiConfigs[0]?.custom_outputs?.length || 0)}>
+                                <div className="flex items-center gap-1">
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-7 px-2 text-xs"
+                                    onClick={handleSaveEditContact}
+                                  >
+                                    Save
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-7 px-2 text-xs text-muted-foreground"
+                                    onClick={handleCancelEditContact}
+                                  >
+                                    Cancel
+                                  </Button>
+                                </div>
+                              </TableCell>
+                              <TableCell></TableCell>
+                            </>
+                          ) : (
+                            // Display mode
+                            <>
+                              <TableCell className="pl-8">
+                                <div className="flex items-center gap-2">
+                                  <Users className="h-3 w-3 text-muted-foreground" />
+                                  <span className="text-sm">
+                                    {person.first_name} {person.last_name}
+                                  </span>
+                                </div>
+                              </TableCell>
+                              <TableCell colSpan={2}>
+                                <div className="flex items-center gap-2 text-sm">
+                                  <Mail className="h-3 w-3 text-muted-foreground" />
+                                  {person.email}
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <span className="text-sm text-muted-foreground">{person.title || "-"}</span>
+                              </TableCell>
+                              <TableCell colSpan={2 + (aiConfigs[0]?.custom_outputs?.length || 0)}></TableCell>
+                              <TableCell className="text-right">
+                                <div className="flex items-center justify-end gap-1">
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-6 w-6"
+                                    onClick={() => handleStartEditContact(person)}
+                                    title="Edit contact"
+                                  >
+                                    <Edit className="h-3 w-3" />
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-6 w-6 text-destructive hover:text-destructive"
+                                    onClick={() => handleDeleteContact(person.id)}
+                                    title="Delete contact"
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </Button>
+                                </div>
+                              </TableCell>
+                            </>
+                          )}
                         </TableRow>
                       ))}
                     </Fragment>

@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { exchangeCodeForTokens } from '@/lib/gmail';
 import { getServerAdminPB } from '@/lib/pocketbase';
 
+// Mark as dynamic to prevent static generation (uses searchParams)
+export const dynamic = 'force-dynamic';
+
 // GET: Handle OAuth callback and exchange code for tokens
 export async function GET(request: NextRequest) {
   try {

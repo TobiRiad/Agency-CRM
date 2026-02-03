@@ -12,6 +12,23 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "@/components/ui/use-toast";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
   Mail,
   Shield,
   CheckCircle2,
@@ -19,8 +36,12 @@ import {
   ExternalLink,
   AlertCircle,
   Loader2,
+  Plus,
+  Copy,
+  Trash2,
+  UserPlus,
 } from "lucide-react";
-import type { User, EmailProvider, AppSetting } from "@/types";
+import type { User, EmailProvider, AppSetting, Invite } from "@/types";
 
 export default function AdminSettingsPage() {
   const router = useRouter();
@@ -35,6 +56,12 @@ export default function AdminSettingsPage() {
   const [gmailEmail, setGmailEmail] = useState("");
   const [isGmailConnected, setIsGmailConnected] = useState(false);
   const [senderName, setSenderName] = useState("");
+
+  // Invites state
+  const [invites, setInvites] = useState<Invite[]>([]);
+  const [isAddInviteOpen, setIsAddInviteOpen] = useState(false);
+  const [newInviteEmail, setNewInviteEmail] = useState("");
+  const [isCreatingInvite, setIsCreatingInvite] = useState(false);
 
   useEffect(() => {
     const loadData = async () => {
@@ -70,6 +97,17 @@ export default function AdminSettingsPage() {
           if (setting.key === "gmail_refresh_token") {
             setIsGmailConnected(true);
           }
+        }
+
+        // Load invites
+        try {
+          const invitesList = await pb.collection("invites").getList<Invite>(1, 100, {
+            sort: "-created",
+            expand: "used_by,created_by",
+          });
+          setInvites(invitesList.items);
+        } catch (e) {
+          console.log("Invites collection may not exist yet:", e);
         }
 
         setIsLoading(false);
@@ -230,6 +268,100 @@ export default function AdminSettingsPage() {
         variant: "destructive",
       });
     }
+  };
+
+  // Generate a random token
+  const generateToken = () => {
+    const array = new Uint8Array(32);
+    crypto.getRandomValues(array);
+    return Array.from(array, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  };
+
+  // Create new invite
+  const createInvite = async () => {
+    if (!newInviteEmail.trim()) {
+      toast({
+        title: "Email required",
+        description: "Please enter an email address for the invite.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsCreatingInvite(true);
+    try {
+      const pb = getClientPB();
+      const token = generateToken();
+      
+      const invite = await pb.collection("invites").create<Invite>({
+        email: newInviteEmail.trim().toLowerCase(),
+        token,
+        used: false,
+        created_by: user?.id,
+        expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(), // 7 days
+      });
+
+      setInvites([invite, ...invites]);
+      setNewInviteEmail("");
+      setIsAddInviteOpen(false);
+
+      // Copy link to clipboard
+      const inviteUrl = `${window.location.origin}/register?token=${token}`;
+      await navigator.clipboard.writeText(inviteUrl);
+
+      toast({
+        title: "Invite created",
+        description: "Invite link has been copied to your clipboard.",
+      });
+    } catch (error) {
+      console.error("Failed to create invite:", error);
+      toast({
+        title: "Error",
+        description: "Failed to create invite. Make sure the invites collection exists.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsCreatingInvite(false);
+    }
+  };
+
+  // Copy invite link
+  const copyInviteLink = async (token: string) => {
+    const inviteUrl = `${window.location.origin}/register?token=${token}`;
+    await navigator.clipboard.writeText(inviteUrl);
+    toast({
+      title: "Copied",
+      description: "Invite link copied to clipboard.",
+    });
+  };
+
+  // Delete invite
+  const deleteInvite = async (inviteId: string) => {
+    try {
+      const pb = getClientPB();
+      await pb.collection("invites").delete(inviteId);
+      setInvites(invites.filter((i) => i.id !== inviteId));
+      toast({
+        title: "Invite deleted",
+        description: "The invite has been removed.",
+      });
+    } catch (error) {
+      console.error("Failed to delete invite:", error);
+      toast({
+        title: "Error",
+        description: "Failed to delete invite.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Format date
+  const formatDate = (dateStr: string) => {
+    return new Date(dateStr).toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
   };
 
   if (isLoading) {
@@ -445,6 +577,141 @@ export default function AdminSettingsPage() {
               Admin users have access to system settings. Team users can manage campaigns.
             </p>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Team Invites */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <UserPlus className="w-5 h-5" />
+                Team Invites
+              </CardTitle>
+              <CardDescription>
+                Invite new team members. Only users with a valid invite link can register.
+              </CardDescription>
+            </div>
+            <Dialog open={isAddInviteOpen} onOpenChange={setIsAddInviteOpen}>
+              <DialogTrigger asChild>
+                <Button>
+                  <Plus className="w-4 h-4 mr-2" />
+                  Create Invite
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Create New Invite</DialogTitle>
+                  <DialogDescription>
+                    Enter the email address for the new team member. They will receive a unique invite link.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="invite-email">Email Address</Label>
+                    <Input
+                      id="invite-email"
+                      type="email"
+                      placeholder="newmember@company.com"
+                      value={newInviteEmail}
+                      onChange={(e) => setNewInviteEmail(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    onClick={() => setIsAddInviteOpen(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button onClick={createInvite} disabled={isCreatingInvite}>
+                    {isCreatingInvite ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Creating...
+                      </>
+                    ) : (
+                      "Create & Copy Link"
+                    )}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {invites.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <UserPlus className="w-12 h-12 mx-auto mb-4 opacity-20" />
+              <p>No invites created yet.</p>
+              <p className="text-sm">Create an invite to add team members.</p>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Email</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Created</TableHead>
+                  <TableHead>Expires</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {invites.map((invite) => (
+                  <TableRow key={invite.id}>
+                    <TableCell className="font-medium">{invite.email}</TableCell>
+                    <TableCell>
+                      {invite.used ? (
+                        <Badge variant="secondary" className="bg-green-100 text-green-700">
+                          <CheckCircle2 className="w-3 h-3 mr-1" />
+                          Used
+                        </Badge>
+                      ) : invite.expires_at && new Date(invite.expires_at) < new Date() ? (
+                        <Badge variant="secondary" className="bg-red-100 text-red-700">
+                          <XCircle className="w-3 h-3 mr-1" />
+                          Expired
+                        </Badge>
+                      ) : (
+                        <Badge variant="secondary" className="bg-blue-100 text-blue-700">
+                          Pending
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {formatDate(invite.created)}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {invite.expires_at ? formatDate(invite.expires_at) : "Never"}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        {!invite.used && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => copyInviteLink(invite.token)}
+                          >
+                            <Copy className="w-4 h-4" />
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => deleteInvite(invite.id)}
+                          className="text-destructive hover:text-destructive"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
         </CardContent>
       </Card>
     </div>
