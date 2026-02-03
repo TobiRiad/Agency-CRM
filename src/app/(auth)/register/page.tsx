@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getClientPB, register } from "@/lib/pocketbase";
@@ -11,7 +11,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { toast } from "@/components/ui/use-toast";
 import { Mail, Lock, User, ArrowRight, AlertCircle, Loader2, CheckCircle } from "lucide-react";
 
-export default function RegisterPage() {
+function RegisterForm() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -265,5 +265,33 @@ export default function RegisterPage() {
         </CardFooter>
       </form>
     </Card>
+  );
+}
+
+// Loading fallback for Suspense
+function RegisterLoading() {
+  return (
+    <Card className="w-full shadow-xl">
+      <CardHeader className="space-y-1 text-center">
+        <div className="flex justify-center mb-4">
+          <div className="w-12 h-12 bg-primary rounded-xl flex items-center justify-center">
+            <Loader2 className="w-6 h-6 text-primary-foreground animate-spin" />
+          </div>
+        </div>
+        <CardTitle className="text-2xl font-bold">Loading...</CardTitle>
+        <CardDescription>
+          Please wait...
+        </CardDescription>
+      </CardHeader>
+    </Card>
+  );
+}
+
+// Main page component with Suspense boundary
+export default function RegisterPage() {
+  return (
+    <Suspense fallback={<RegisterLoading />}>
+      <RegisterForm />
+    </Suspense>
   );
 }
