@@ -4,7 +4,8 @@ import { NextRequest, NextResponse } from "next/server";
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-const PB_URL = process.env.NEXT_PUBLIC_POCKETBASE_URL || "http://localhost:8090";
+// Use POCKETBASE_URL for server-side, fallback to NEXT_PUBLIC_POCKETBASE_URL
+const PB_URL = process.env.POCKETBASE_URL || process.env.NEXT_PUBLIC_POCKETBASE_URL || "http://localhost:8090";
 
 /**
  * GET /api/campaigns/[campaignId]/batches

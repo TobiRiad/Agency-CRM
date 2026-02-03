@@ -14,6 +14,7 @@ import {
   updateContact,
   deleteContact,
   createCompany,
+  deleteCompany,
   setContactFieldValue,
   getFunnelStages,
   getContactStages,
@@ -529,6 +530,29 @@ export default function CampaignPage() {
       toast({
         title: "Error",
         description: "Failed to delete contact.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleDeleteCompany = async (companyId: string) => {
+    if (!confirm("Are you sure you want to delete this company and all its contacts?")) {
+      return;
+    }
+
+    try {
+      const pb = getClientPB();
+      await deleteCompany(pb, companyId);
+      toast({
+        title: "Company deleted",
+        description: "The company and its contacts have been removed.",
+      });
+      loadData();
+    } catch (error) {
+      console.error("Failed to delete company:", error);
+      toast({
+        title: "Error",
+        description: "Failed to delete company.",
         variant: "destructive",
       });
     }
@@ -1216,7 +1240,15 @@ export default function CampaignPage() {
 
         {/* Batch Toolbar for Leads */}
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-4">
+            {/* Company Count */}
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Badge variant="secondary" className="font-medium">
+                {filteredCompanies.length === companies.length
+                  ? `${companies.length} companies`
+                  : `${filteredCompanies.length} of ${companies.length} companies`}
+              </Badge>
+            </div>
             {batches.length > 0 && (
               <div className="flex items-center gap-1">
                 <Select value={batchFilter} onValueChange={setBatchFilter}>
@@ -1518,6 +1550,15 @@ export default function CampaignPage() {
                             >
                               <ArrowRight className="h-3 w-3 mr-1" />
                               Push
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-destructive hover:text-destructive"
+                              onClick={() => handleDeleteCompany(company.id)}
+                              title="Delete company"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
                             </Button>
                           </div>
                         </TableCell>

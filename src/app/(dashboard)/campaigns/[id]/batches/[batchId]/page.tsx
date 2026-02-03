@@ -787,9 +787,16 @@ export default function BatchDetailPage() {
               </Link>
             </Button>
             <div className="flex-1">
-              <h1 className="text-2xl font-bold">{batch.name}</h1>
+              <div className="flex items-center gap-3">
+                <h1 className="text-2xl font-bold">{batch.name}</h1>
+                <Badge variant="secondary" className="font-medium">
+                  {filteredCompanies.length === companies.length
+                    ? `${companies.length} companies`
+                    : `${filteredCompanies.length} of ${companies.length} companies`}
+                </Badge>
+              </div>
               <p className="text-muted-foreground">
-                {companies.length} companies in this batch
+                Leads batch
               </p>
             </div>
           </div>
