@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -92,7 +92,13 @@ export default function SendEmailPage() {
   const params = useParams();
   const searchParams = useSearchParams();
   const campaignId = params.id as string;
-  const preselectedContacts = searchParams.get("contacts")?.split(",").filter(Boolean) || [];
+  const contactsParam = searchParams.get("contacts");
+  
+  // Memoize to prevent infinite re-renders (arrays are compared by reference)
+  const preselectedContacts = useMemo(
+    () => contactsParam?.split(",").filter(Boolean) || [],
+    [contactsParam]
+  );
 
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [contacts, setContacts] = useState<Contact[]>([]);

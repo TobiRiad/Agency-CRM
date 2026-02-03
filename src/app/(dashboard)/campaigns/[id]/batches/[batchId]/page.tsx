@@ -7,6 +7,7 @@ import {
   getClientPB,
   getCampaign,
   getBatch,
+  getBatches,
   getContactsByBatch,
   getCompaniesByBatch,
   getCompanies,
@@ -16,12 +17,15 @@ import {
   updateContact,
   deleteContact,
   createCompany,
+  deleteCompany,
   getFunnelStages,
   getContactStages,
   setContactStage,
   getCurrentUser,
   getContactsByCompany,
   getAIScoringConfigs,
+  pushCompanyToOutreach,
+  getOutreachCampaigns,
 } from "@/lib/pocketbase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -69,6 +73,7 @@ import {
   Filter,
   Send,
   ArrowLeft,
+  ArrowRight,
   ChevronRight,
   FileText,
   Users,
@@ -156,6 +161,26 @@ export default function BatchDetailPage() {
     title: "",
   });
 
+  // State for push to outreach
+  const [outreachCampaigns, setOutreachCampaigns] = useState<Campaign[]>([]);
+  const [pushingCompanyId, setPushingCompanyId] = useState<string | null>(null);
+  const [selectedOutreachCampaign, setSelectedOutreachCampaign] = useState<string>("");
+  const [selectedFunnelStage, setSelectedFunnelStage] = useState<string>("");
+  const [selectedOutreachBatch, setSelectedOutreachBatch] = useState<string>("");
+  const [isPushDialogOpen, setIsPushDialogOpen] = useState(false);
+  const [outreachCampaignFunnelStages, setOutreachCampaignFunnelStages] = useState<FunnelStage[]>([]);
+  const [outreachCampaignBatches, setOutreachCampaignBatches] = useState<Batch[]>([]);
+
+  // State for adding person to company
+  const [selectedCompanyForPerson, setSelectedCompanyForPerson] = useState<string>("");
+  const [isAddPersonOpen, setIsAddPersonOpen] = useState(false);
+  const [newPerson, setNewPerson] = useState({
+    email: "",
+    first_name: "",
+    last_name: "",
+    title: "",
+  });
+
   const loadData = useCallback(async () => {
     try {
       const pb = getClientPB();
@@ -169,6 +194,7 @@ export default function BatchDetailPage() {
 
       if (campaignData.kind === 'leads') {
         // Leads campaign: load companies in this batch
+        const user = getCurrentUser(pb);
         const [companiesData, allCompaniesData, configs] = await Promise.all([
           getCompaniesByBatch(pb, batchId),
           getCompanies(pb, campaignId),
@@ -186,6 +212,12 @@ export default function BatchDetailPage() {
           contactsByCompany.set(company.id, companyPeople);
         }
         setCompanyContacts(contactsByCompany);
+
+        // Load outreach campaigns for push dropdown
+        if (user) {
+          const outreach = await getOutreachCampaigns(pb, user.id);
+          setOutreachCampaigns(outreach);
+        }
       } else {
         // Outreach campaign: load contacts in this batch
         const [contactsData, companiesData, fieldsData, stagesData, contactStagesData] = await Promise.all([
@@ -708,6 +740,143 @@ export default function BatchDetailPage() {
     });
   };
 
+  const handleDeleteCompany = async (companyId: string) => {
+    if (!confirm("Are you sure you want to delete this company and all its contacts?")) {
+      return;
+    }
+
+    try {
+      const pb = getClientPB();
+      await deleteCompany(pb, companyId);
+      toast({
+        title: "Company deleted",
+        description: "The company and its contacts have been removed.",
+      });
+      loadData();
+    } catch (error) {
+      console.error("Failed to delete company:", error);
+      toast({
+        title: "Error",
+        description: "Failed to delete company.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handlePushToOutreach = async (companyId: string) => {
+    if (!selectedOutreachCampaign) {
+      toast({
+        title: "Select Campaign",
+        description: "Please select an outreach campaign to push to.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setPushingCompanyId(companyId);
+    try {
+      const pb = getClientPB();
+      const createdContacts = await pushCompanyToOutreach(
+        pb, 
+        companyId, 
+        selectedOutreachCampaign,
+        selectedFunnelStage || undefined,
+        selectedOutreachBatch || undefined
+      );
+
+      if (createdContacts.length > 0) {
+        toast({
+          title: "Pushed to Outreach",
+          description: `Created ${createdContacts.length} contact(s) in outreach campaign.`,
+        });
+        setIsPushDialogOpen(false);
+        setSelectedOutreachCampaign("");
+        setSelectedFunnelStage("");
+        setSelectedOutreachBatch("");
+      } else {
+        toast({
+          title: "No Contacts",
+          description: "No people found in this company to push.",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error("Failed to push to outreach:", error);
+      toast({
+        title: "Error",
+        description: "Failed to push company to outreach.",
+        variant: "destructive",
+      });
+    } finally {
+      setPushingCompanyId(null);
+    }
+  };
+
+  // Load funnel stages and batches when outreach campaign is selected
+  const handleOutreachCampaignSelect = async (campaignId: string) => {
+    setSelectedOutreachCampaign(campaignId);
+    setSelectedFunnelStage("");
+    setSelectedOutreachBatch("");
+    
+    if (campaignId) {
+      try {
+        const pb = getClientPB();
+        const [stages, batches] = await Promise.all([
+          getFunnelStages(pb, campaignId),
+          getBatches(pb, campaignId),
+        ]);
+        setOutreachCampaignFunnelStages(stages.sort((a, b) => a.order - b.order));
+        setOutreachCampaignBatches(batches);
+      } catch (error) {
+        console.error("Failed to load outreach campaign details:", error);
+      }
+    } else {
+      setOutreachCampaignFunnelStages([]);
+      setOutreachCampaignBatches([]);
+    }
+  };
+
+  // Check if we can push (has outreach campaigns available)
+  const canPush = outreachCampaigns.length > 0;
+
+  // Add person to company handler
+  const handleAddPerson = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPerson.email.trim() || !selectedCompanyForPerson) return;
+
+    setIsCreating(true);
+    try {
+      const pb = getClientPB();
+      const currentUser = getCurrentUser(pb);
+      await createContact(pb, {
+        email: newPerson.email,
+        first_name: newPerson.first_name,
+        last_name: newPerson.last_name,
+        title: newPerson.title,
+        company: selectedCompanyForPerson,
+        campaign: campaignId,
+        created_by: currentUser?.id,
+      });
+      toast({
+        title: "Person added",
+        description: "The person has been added to the company.",
+      });
+      setNewPerson({ email: "", first_name: "", last_name: "", title: "" });
+      setIsAddPersonOpen(false);
+      setSelectedCompanyForPerson("");
+      loadData();
+    } catch (error) {
+      console.error("Failed to add person:", error);
+      toast({
+        title: "Error",
+        description: "Failed to add person. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
   const getContactStageId = (contactId: string): string | undefined => {
     return contactStageMap.get(contactId);
   };
@@ -1074,9 +1243,10 @@ export default function BatchDetailPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="min-w-[160px]">Company</TableHead>
-                <TableHead className="min-w-[160px]">Website</TableHead>
-                <TableHead className="min-w-[160px]">Email</TableHead>
+                <TableHead className="min-w-[140px]">Company</TableHead>
+                <TableHead className="min-w-[140px]">Description</TableHead>
+                <TableHead className="min-w-[140px]">Website</TableHead>
+                <TableHead className="min-w-[140px]">Email</TableHead>
                 <TableHead className="text-center">People</TableHead>
                 <TableHead>Score</TableHead>
                 <TableHead>Class</TableHead>
@@ -1085,13 +1255,13 @@ export default function BatchDetailPage() {
                     <span className="truncate block max-w-[120px]">{output.label}</span>
                   </TableHead>
                 ))}
-                <TableHead className="w-[140px] text-right">Actions</TableHead>
+                <TableHead className="w-[180px] text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filteredCompanies.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7 + (aiConfigs[0]?.custom_outputs?.length || 0)} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={8 + (aiConfigs[0]?.custom_outputs?.length || 0)} className="text-center py-12 text-muted-foreground">
                     {searchQuery
                       ? "No companies match your search"
                       : "No companies in this batch yet. Add your first company."}
@@ -1103,7 +1273,7 @@ export default function BatchDetailPage() {
                   return (
                     <Fragment key={company.id}>
                       <TableRow className="bg-slate-50 dark:bg-slate-900/50">
-                        <TableCell className="font-medium max-w-[180px]">
+                        <TableCell className="font-medium max-w-[160px]">
                           <Link 
                             href={`/campaigns/${campaignId}/companies/${company.id}`}
                             className="flex items-center gap-2 hover:text-primary hover:underline"
@@ -1111,10 +1281,17 @@ export default function BatchDetailPage() {
                             <FileText className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                             <span className="truncate" title={company.name}>{company.name}</span>
                           </Link>
-                          {company.description && (
-                            <p className="text-xs text-muted-foreground mt-1 truncate" title={company.description}>
+                        </TableCell>
+                        <TableCell className="max-w-[180px]">
+                          {company.description ? (
+                            <p 
+                              className="text-sm text-muted-foreground truncate"
+                              title={company.description}
+                            >
                               {company.description}
                             </p>
+                          ) : (
+                            <span className="text-muted-foreground">-</span>
                           )}
                         </TableCell>
                         <TableCell className="max-w-[180px]">
@@ -1220,6 +1397,18 @@ export default function BatchDetailPage() {
                             >
                               <Copy className="h-3.5 w-3.5" />
                             </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              onClick={() => {
+                                setSelectedCompanyForPerson(company.id);
+                                setIsAddPersonOpen(true);
+                              }}
+                              title="Add person"
+                            >
+                              <Plus className="h-3.5 w-3.5" />
+                            </Button>
                             {aiConfigs.length > 0 && (
                               <Button
                                 variant={company.ai_score !== undefined ? "ghost" : "default"}
@@ -1239,6 +1428,29 @@ export default function BatchDetailPage() {
                                 )}
                               </Button>
                             )}
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-7 px-2 text-xs"
+                              onClick={() => {
+                                setPushingCompanyId(company.id);
+                                setIsPushDialogOpen(true);
+                              }}
+                              disabled={!canPush || pushingCompanyId === company.id}
+                              title="Push to outreach campaign"
+                            >
+                              <ArrowRight className="h-3 w-3 mr-1" />
+                              Push
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-destructive hover:text-destructive"
+                              onClick={() => handleDeleteCompany(company.id)}
+                              title="Delete company"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
                           </div>
                         </TableCell>
                       </TableRow>
@@ -1365,6 +1577,157 @@ export default function BatchDetailPage() {
         <div className="text-sm text-muted-foreground">
           Showing {filteredCompanies.length} of {companies.length} companies
         </div>
+
+        {/* Add Person Dialog */}
+        <Dialog open={isAddPersonOpen} onOpenChange={(open) => {
+          setIsAddPersonOpen(open);
+          if (!open) {
+            setSelectedCompanyForPerson("");
+            setNewPerson({ email: "", first_name: "", last_name: "", title: "" });
+          }
+        }}>
+          <DialogContent>
+            <form onSubmit={handleAddPerson}>
+              <DialogHeader>
+                <DialogTitle>Add Person</DialogTitle>
+                <DialogDescription>
+                  Add a person to {companies.find(c => c.id === selectedCompanyForPerson)?.name || "this company"}.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="person_first_name">First Name</Label>
+                    <Input
+                      id="person_first_name"
+                      value={newPerson.first_name}
+                      onChange={(e) => setNewPerson({ ...newPerson, first_name: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="person_last_name">Last Name</Label>
+                    <Input
+                      id="person_last_name"
+                      value={newPerson.last_name}
+                      onChange={(e) => setNewPerson({ ...newPerson, last_name: e.target.value })}
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="person_email">Email *</Label>
+                  <Input
+                    id="person_email"
+                    type="email"
+                    value={newPerson.email}
+                    onChange={(e) => setNewPerson({ ...newPerson, email: e.target.value })}
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="person_title">Title</Label>
+                  <Input
+                    id="person_title"
+                    value={newPerson.title}
+                    onChange={(e) => setNewPerson({ ...newPerson, title: e.target.value })}
+                    placeholder="e.g., CEO, Marketing Director"
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setIsAddPersonOpen(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={isCreating || !newPerson.email.trim()}>
+                  {isCreating ? "Adding..." : "Add Person"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+
+        {/* Push to Outreach Dialog */}
+        <Dialog open={isPushDialogOpen} onOpenChange={(open) => {
+          setIsPushDialogOpen(open);
+          if (!open) {
+            setPushingCompanyId(null);
+            setSelectedOutreachCampaign("");
+            setSelectedFunnelStage("");
+            setSelectedOutreachBatch("");
+          }
+        }}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Push to Outreach Campaign</DialogTitle>
+              <DialogDescription>
+                Push {companies.find(c => c.id === pushingCompanyId)?.name || "this company"}&apos;s contacts to an outreach campaign.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label>Outreach Campaign *</Label>
+                <Select value={selectedOutreachCampaign} onValueChange={handleOutreachCampaignSelect}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select outreach campaign" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {outreachCampaigns.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {selectedOutreachCampaign && outreachCampaignFunnelStages.length > 0 && (
+                <div className="space-y-2">
+                  <Label>Initial Stage (optional)</Label>
+                  <Select value={selectedFunnelStage} onValueChange={setSelectedFunnelStage}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select initial stage" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="">Default (first stage)</SelectItem>
+                      {outreachCampaignFunnelStages.map((stage) => (
+                        <SelectItem key={stage.id} value={stage.id}>
+                          {stage.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              {selectedOutreachCampaign && outreachCampaignBatches.length > 0 && (
+                <div className="space-y-2">
+                  <Label>Batch (optional)</Label>
+                  <Select value={selectedOutreachBatch} onValueChange={setSelectedOutreachBatch}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select batch" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="">No batch</SelectItem>
+                      {outreachCampaignBatches.map((b) => (
+                        <SelectItem key={b.id} value={b.id}>
+                          {b.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setIsPushDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button 
+                onClick={() => pushingCompanyId && handlePushToOutreach(pushingCompanyId)}
+                disabled={!selectedOutreachCampaign || pushingCompanyId === null}
+              >
+                {pushingCompanyId ? "Push to Outreach" : "Pushing..."}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     );
   }
