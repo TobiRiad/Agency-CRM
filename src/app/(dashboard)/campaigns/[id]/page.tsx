@@ -860,6 +860,22 @@ export default function CampaignPage() {
       );
 
       if (createdContacts.length > 0) {
+        // Update local companies state to reflect the push
+        setCompanies(prevCompanies =>
+          prevCompanies.map(company => {
+            if (company.id === companyId) {
+              const existingPushed = company.pushed_to_campaigns || [];
+              if (!existingPushed.includes(selectedOutreachCampaign)) {
+                return {
+                  ...company,
+                  pushed_to_campaigns: [...existingPushed, selectedOutreachCampaign],
+                };
+              }
+            }
+            return company;
+          })
+        );
+
         toast({
           title: "Pushed to Outreach",
           description: `Created ${createdContacts.length} contact(s) in outreach campaign.`,
