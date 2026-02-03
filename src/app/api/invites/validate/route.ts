@@ -19,6 +19,23 @@ export async function GET(request: NextRequest) {
 
     const pb = new PocketBase(process.env.POCKETBASE_URL);
 
+    // Authenticate as admin to query invites
+    if (process.env.POCKETBASE_ADMIN_EMAIL && process.env.POCKETBASE_ADMIN_PASSWORD) {
+      try {
+        // Try new endpoint first (PocketBase v0.23+)
+        await pb.collection('_superusers').authWithPassword(
+          process.env.POCKETBASE_ADMIN_EMAIL,
+          process.env.POCKETBASE_ADMIN_PASSWORD
+        );
+      } catch {
+        // Fallback to old endpoint
+        await pb.admins.authWithPassword(
+          process.env.POCKETBASE_ADMIN_EMAIL,
+          process.env.POCKETBASE_ADMIN_PASSWORD
+        );
+      }
+    }
+
     // Find invite by token
     try {
       const invite = await pb.collection('invites').getFirstListItem<Invite>(
