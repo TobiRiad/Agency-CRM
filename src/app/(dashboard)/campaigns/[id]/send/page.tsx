@@ -337,7 +337,7 @@ export default function SendEmailPage() {
         contactId: contact.id,
         contact,
         templateId: template.id,
-        templateName: template.name || "Template",
+        templateName: template.subject || "Template",
         to: contact.email,
         subject: interpolateTemplate(template.subject, contactData),
         body: interpolateTemplate(template.body, contactData),

@@ -215,7 +215,7 @@ export default function CampaignPage() {
 
         if (sourceCompanyIds.size > 0) {
           const sourceCompaniesMap = new Map<string, Company>();
-          for (const companyId of sourceCompanyIds) {
+          for (const companyId of Array.from(sourceCompanyIds)) {
             try {
               const company = await pb.collection('companies').getOne<Company>(companyId);
               sourceCompaniesMap.set(companyId, company);

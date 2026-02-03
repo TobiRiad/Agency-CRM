@@ -117,7 +117,7 @@ export default function CampaignSettingsPage() {
 
   // Funnel stage form
   const [isAddStageOpen, setIsAddStageOpen] = useState(false);
-  const [newStage, setNewStage] = useState({ name: "", color: FUNNEL_STAGE_COLORS[0] });
+  const [newStage, setNewStage] = useState<{ name: string; color: typeof FUNNEL_STAGE_COLORS[number] }>({ name: "", color: FUNNEL_STAGE_COLORS[0] });
 
   // Batch form
   const [isAddBatchOpen, setIsAddBatchOpen] = useState(false);
@@ -385,11 +385,12 @@ export default function CampaignSettingsPage() {
     setIsSaving(true);
     try {
       const pb = getClientPB();
-      for (const stage of DEFAULT_FUNNEL_STAGES) {
+      for (let i = 0; i < DEFAULT_FUNNEL_STAGES.length; i++) {
+        const stage = DEFAULT_FUNNEL_STAGES[i];
         await createFunnelStage(pb, {
           name: stage.name,
-          order: stage.order,
-          color: getStageColor(stage.order),
+          order: i,
+          color: getStageColor(stage.color),
           campaign: campaignId,
         });
       }
@@ -1726,6 +1727,7 @@ Output ONLY the JSON configuration with the \`ai_opener_prompt\` field.`;
                         enable_classification: true,
                         classification_label: "Industry",
                         classification_options: [],
+                        custom_outputs: [],
                         model: "gpt-4o-mini",
                         temperature: 0.3,
                       });

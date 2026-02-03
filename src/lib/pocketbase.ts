@@ -376,7 +376,7 @@ export async function bulkCreateContacts(pb: PocketBase, contacts: Array<{
   const results: Contact[] = [];
   
   // Group contacts by campaign to efficiently get uncategorized stages
-  const campaignIds = [...new Set(contacts.map(c => c.campaign))];
+  const campaignIds = Array.from(new Set(contacts.map(c => c.campaign)));
   const uncategorizedStages = new Map<string, FunnelStage>();
   
   for (const campaignId of campaignIds) {

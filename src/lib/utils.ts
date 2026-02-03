@@ -84,10 +84,13 @@ export const DEFAULT_FUNNEL_STAGES = [
   { name: "Lost", color: "red" },
 ] as const
 
-export function getStageColor(color: string): string {
-  // Maps a semantic color name to Tailwind classes used across the UI.
+export function getStageColor(color: string | number): string {
+  // Maps a semantic color name (or index) to Tailwind classes used across the UI.
+  // If a number is passed, it picks a color from FUNNEL_STAGE_COLORS by index.
   // Keep this conservative: default to gray if an unknown color is passed.
-  const c = (color || "gray").toLowerCase()
+  const c = typeof color === "number"
+    ? FUNNEL_STAGE_COLORS[color % FUNNEL_STAGE_COLORS.length]
+    : (color || "gray").toLowerCase()
   const map: Record<string, string> = {
     slate: "bg-slate-100 text-slate-800 border-slate-200",
     gray: "bg-gray-100 text-gray-800 border-gray-200",

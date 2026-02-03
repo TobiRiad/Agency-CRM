@@ -47,7 +47,7 @@ export async function POST(request: NextRequest) {
     const campaign = contact.expand.campaign as Campaign;
 
     // Check if this is an outreach campaign
-    if (campaign.kind !== 'outreach' && campaign.kind !== '') {
+    if (campaign.kind !== 'outreach') {
       return NextResponse.json(
         { success: false, error: "AI opener is only available for outreach campaigns" },
         { status: 400 }
