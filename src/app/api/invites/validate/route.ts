@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const pb = new PocketBase(process.env.POCKETBASE_URL);
+    const pb = new PocketBase(process.env.POCKETBASE_URL || process.env.NEXT_PUBLIC_POCKETBASE_URL);
 
     // Authenticate as admin to query invites
     if (process.env.POCKETBASE_ADMIN_EMAIL && process.env.POCKETBASE_ADMIN_PASSWORD) {
@@ -90,7 +90,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const pb = new PocketBase(process.env.POCKETBASE_URL);
+    const pb = new PocketBase(process.env.POCKETBASE_URL || process.env.NEXT_PUBLIC_POCKETBASE_URL);
 
     // Authenticate as admin to update the invite
     if (process.env.POCKETBASE_ADMIN_EMAIL && process.env.POCKETBASE_ADMIN_PASSWORD) {
