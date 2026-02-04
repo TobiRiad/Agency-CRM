@@ -74,6 +74,7 @@ import {
   Send,
   ArrowLeft,
   ArrowRight,
+  ArrowUpDown,
   ChevronRight,
   FileText,
   Users,
@@ -154,6 +155,8 @@ export default function BatchDetailPage() {
   } | null>(null);
   const [manualUrls, setManualUrls] = useState<Partial<FirecrawlUrls>>({});
   const [showUrlPreview, setShowUrlPreview] = useState(false);
+  const [minScore, setMinScore] = useState<string>("");
+  const [sortByScore, setSortByScore] = useState<'asc' | 'desc' | null>(null);
 
   // State for inline company creation during contact creation
   const [isCreatingNewCompany, setIsCreatingNewCompany] = useState(false);
@@ -1108,6 +1111,12 @@ export default function BatchDetailPage() {
   });
 
   const filteredCompanies = companies.filter((company) => {
+    // Apply minimum score filter
+    const minScoreNum = parseFloat(minScore);
+    if (!isNaN(minScoreNum) && minScoreNum > 0) {
+      if (company.ai_score === undefined || company.ai_score < minScoreNum) return false;
+    }
+
     if (!searchQuery) return true;
     const query = searchQuery.toLowerCase();
     return (
@@ -1116,6 +1125,11 @@ export default function BatchDetailPage() {
       company.website?.toLowerCase().includes(query) ||
       company.industry?.toLowerCase().includes(query)
     );
+  }).sort((a, b) => {
+    if (!sortByScore) return 0;
+    const scoreA = a.ai_score ?? -Infinity;
+    const scoreB = b.ai_score ?? -Infinity;
+    return sortByScore === 'desc' ? scoreB - scoreA : scoreA - scoreB;
   });
 
   const getFieldValue = (contactId: string, fieldId: string): string => {
@@ -1187,7 +1201,19 @@ export default function BatchDetailPage() {
                 placeholder="Search companies..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10"
+                className="pl-10 h-10"
+              />
+            </div>
+            {/* Min Score Filter */}
+            <div className="flex items-center gap-2">
+              <Star className="h-4 w-4 text-muted-foreground" />
+              <Input
+                type="number"
+                placeholder="Min score"
+                value={minScore}
+                onChange={(e) => setMinScore(e.target.value)}
+                className="w-24 h-10"
+                min="0"
               />
             </div>
           </div>
@@ -1645,7 +1671,15 @@ export default function BatchDetailPage() {
                 <TableHead className="min-w-[140px]">Website</TableHead>
                 <TableHead className="min-w-[140px]">Email</TableHead>
                 <TableHead className="text-center">People</TableHead>
-                <TableHead>Score</TableHead>
+                <TableHead
+                  className="cursor-pointer hover:bg-muted/50 transition-colors"
+                  onClick={() => setSortByScore(prev => prev === 'desc' ? 'asc' : prev === 'asc' ? null : 'desc')}
+                >
+                  <div className="flex items-center gap-1">
+                    Score
+                    <ArrowUpDown className={`h-3 w-3 ${sortByScore ? 'text-primary' : 'text-muted-foreground'}`} />
+                  </div>
+                </TableHead>
                 <TableHead>Class</TableHead>
                 {aiConfigs.length > 0 && aiConfigs[0].custom_outputs?.map((output) => (
                   <TableHead key={output.id} className="min-w-[100px] text-xs" title={output.label}>

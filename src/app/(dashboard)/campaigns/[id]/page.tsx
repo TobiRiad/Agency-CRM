@@ -81,6 +81,7 @@ import {
   GitBranch,
   Sparkles,
   ArrowRight,
+  ArrowUpDown,
   Loader2,
   Star,
   ExternalLink,
@@ -113,6 +114,8 @@ export default function CampaignPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [stageFilter, setStageFilter] = useState<string>("all");
   const [batchFilter, setBatchFilter] = useState<string>("all");
+  const [minScore, setMinScore] = useState<string>("");
+  const [sortByScore, setSortByScore] = useState<'asc' | 'desc' | null>(null);
   const [isAddContactOpen, setIsAddContactOpen] = useState(false);
   const [isAddCompanyOpen, setIsAddCompanyOpen] = useState(false);
   const [isAddBatchOpen, setIsAddBatchOpen] = useState(false);
@@ -1235,19 +1238,31 @@ export default function CampaignPage() {
   };
 
   // Filter companies by batch (for leads campaigns)
-  const filteredCompanies = companies.filter((company) => {
-    // Apply batch filter
-    if (batchFilter !== "all") {
-      if (batchFilter === "none") {
-        // Filter for companies with no batch
-        if (company.batch) return false;
-      } else {
-        // Filter for specific batch
-        if (company.batch !== batchFilter) return false;
+  const filteredCompanies = companies
+    .filter((company) => {
+      // Apply batch filter
+      if (batchFilter !== "all") {
+        if (batchFilter === "none") {
+          // Filter for companies with no batch
+          if (company.batch) return false;
+        } else {
+          // Filter for specific batch
+          if (company.batch !== batchFilter) return false;
+        }
       }
-    }
-    return true;
-  });
+      // Apply minimum score filter
+      const minScoreNum = parseFloat(minScore);
+      if (!isNaN(minScoreNum) && minScoreNum > 0) {
+        if (company.ai_score === undefined || company.ai_score < minScoreNum) return false;
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      if (!sortByScore) return 0;
+      const scoreA = a.ai_score ?? -Infinity;
+      const scoreB = b.ai_score ?? -Infinity;
+      return sortByScore === 'desc' ? scoreB - scoreA : scoreA - scoreB;
+    });
 
   if (isLoading) {
     return (
@@ -1809,6 +1824,18 @@ export default function CampaignPage() {
                 )}
               </div>
             )}
+            {/* Min Score Filter */}
+            <div className="flex items-center gap-2">
+              <Star className="h-4 w-4 text-muted-foreground" />
+              <Input
+                type="number"
+                placeholder="Min score"
+                value={minScore}
+                onChange={(e) => setMinScore(e.target.value)}
+                className="w-24 h-9"
+                min="0"
+              />
+            </div>
           </div>
           <Dialog open={isAddBatchOpen} onOpenChange={setIsAddBatchOpen}>
             <DialogTrigger asChild>
@@ -1865,7 +1892,15 @@ export default function CampaignPage() {
                 <TableHead className="min-w-[140px]">Email</TableHead>
                 <TableHead>Batch</TableHead>
                 <TableHead className="text-center">People</TableHead>
-                <TableHead>Score</TableHead>
+                <TableHead
+                  className="cursor-pointer hover:bg-muted/50 transition-colors"
+                  onClick={() => setSortByScore(prev => prev === 'desc' ? 'asc' : prev === 'asc' ? null : 'desc')}
+                >
+                  <div className="flex items-center gap-1">
+                    Score
+                    <ArrowUpDown className={`h-3 w-3 ${sortByScore ? 'text-primary' : 'text-muted-foreground'}`} />
+                  </div>
+                </TableHead>
                 <TableHead>Class</TableHead>
                 {/* Dynamic custom output columns */}
                 {aiConfigs.length > 0 && aiConfigs[0].custom_outputs?.map((output) => (

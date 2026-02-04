@@ -20,6 +20,8 @@ import {
   Settings,
   LogOut,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Menu,
   X,
   Shield,
@@ -34,8 +36,15 @@ export default function DashboardLayout({
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
+
+  // Load collapsed state from localStorage
+  useEffect(() => {
+    const stored = localStorage.getItem('sidebar-collapsed');
+    if (stored) setIsCollapsed(stored === 'true');
+  }, []);
 
   useEffect(() => {
     const pb = getClientPB();
@@ -51,6 +60,12 @@ export default function DashboardLayout({
     const pb = getClientPB();
     logout(pb);
     router.push("/login");
+  };
+
+  const toggleCollapsed = () => {
+    const newState = !isCollapsed;
+    setIsCollapsed(newState);
+    localStorage.setItem('sidebar-collapsed', String(newState));
   };
 
   if (isLoading) {
@@ -81,18 +96,17 @@ export default function DashboardLayout({
 
       {/* Sidebar */}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-64 bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 transform transition-transform duration-200 ease-in-out lg:translate-x-0 ${
-          isSidebarOpen ? "translate-x-0" : "-translate-x-full"
-        }`}
+        className={`fixed inset-y-0 left-0 z-50 bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 transform transition-all duration-200 ease-in-out lg:translate-x-0 ${isSidebarOpen ? "translate-x-0" : "-translate-x-full"
+          } ${isCollapsed ? "w-16" : "w-64"}`}
       >
         <div className="flex flex-col h-full">
           {/* Logo */}
-          <div className="flex items-center justify-between h-16 px-6 border-b border-slate-200 dark:border-slate-700">
-            <Link href="/campaigns" className="flex items-center space-x-2">
-              <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
+          <div className={`flex items-center h-16 px-4 border-b border-slate-200 dark:border-slate-700 ${isCollapsed ? "justify-center" : "justify-between"}`}>
+            <Link href="/campaigns" className={`flex items-center ${isCollapsed ? "" : "space-x-2"}`}>
+              <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center flex-shrink-0">
                 <Mail className="w-4 h-4 text-primary-foreground" />
               </div>
-              <span className="font-bold text-lg">Agency CRM</span>
+              {!isCollapsed && <span className="font-bold text-lg">Agency CRM</span>}
             </Link>
             <button
               className="lg:hidden"
@@ -103,54 +117,76 @@ export default function DashboardLayout({
           </div>
 
           {/* Navigation */}
-          <nav className="flex-1 p-4 space-y-1">
+          <nav className="flex-1 p-2 space-y-1">
             {navigation.map((item) => {
               const Icon = item.icon;
               return (
                 <Link
                   key={item.name}
                   href={item.href}
-                  className={`flex items-center space-x-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                    isActive(item.href)
+                  title={isCollapsed ? item.name : undefined}
+                  className={`flex items-center px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${isActive(item.href)
                       ? "bg-primary text-primary-foreground"
                       : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
-                  }`}
+                    } ${isCollapsed ? "justify-center" : "space-x-3"}`}
                 >
-                  <Icon className="w-5 h-5" />
-                  <span>{item.name}</span>
+                  <Icon className="w-5 h-5 flex-shrink-0" />
+                  {!isCollapsed && <span>{item.name}</span>}
                 </Link>
               );
             })}
-            
+
             {/* Admin Settings */}
             {isAdmin && (
               <Link
                 href="/admin/settings"
-                className={`flex items-center space-x-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                  isActive("/admin/settings")
+                title={isCollapsed ? "Admin Settings" : undefined}
+                className={`flex items-center px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${isActive("/admin/settings")
                     ? "bg-primary text-primary-foreground"
                     : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
-                }`}
+                  } ${isCollapsed ? "justify-center" : "space-x-3"}`}
               >
-                <Shield className="w-5 h-5" />
-                <span>Admin Settings</span>
+                <Shield className="w-5 h-5 flex-shrink-0" />
+                {!isCollapsed && <span>Admin Settings</span>}
               </Link>
             )}
           </nav>
 
+          {/* Collapse toggle button */}
+          <div className="hidden lg:flex p-2 border-t border-slate-200 dark:border-slate-700">
+            <button
+              onClick={toggleCollapsed}
+              className={`flex items-center w-full px-3 py-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors text-slate-600 dark:text-slate-300 ${isCollapsed ? "justify-center" : ""}`}
+              title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            >
+              {isCollapsed ? (
+                <ChevronRight className="w-5 h-5" />
+              ) : (
+                <>
+                  <ChevronLeft className="w-5 h-5" />
+                  <span className="ml-3 text-sm">Collapse</span>
+                </>
+              )}
+            </button>
+          </div>
+
           {/* User menu */}
-          <div className="p-4 border-t border-slate-200 dark:border-slate-700">
+          <div className="p-2 border-t border-slate-200 dark:border-slate-700">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <button className="flex items-center w-full px-4 py-2.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">
-                  <div className="w-8 h-8 bg-primary/10 rounded-full flex items-center justify-center">
+                <button className={`flex items-center w-full px-3 py-2.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors ${isCollapsed ? "justify-center" : ""}`}>
+                  <div className="w-8 h-8 bg-primary/10 rounded-full flex items-center justify-center flex-shrink-0">
                     <Users className="w-4 h-4 text-primary" />
                   </div>
-                  <div className="ml-3 text-left flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{user?.name || "User"}</p>
-                    <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
-                  </div>
-                  <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                  {!isCollapsed && (
+                    <>
+                      <div className="ml-3 text-left flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{user?.name || "User"}</p>
+                        <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
+                      </div>
+                      <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                    </>
+                  )}
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56">
@@ -172,7 +208,7 @@ export default function DashboardLayout({
       </aside>
 
       {/* Main content */}
-      <div className="lg:pl-64">
+      <div className={`transition-all duration-200 ${isCollapsed ? "lg:pl-16" : "lg:pl-64"}`}>
         {/* Top bar */}
         <header className="sticky top-0 z-30 h-16 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700">
           <div className="flex items-center justify-between h-full px-4 lg:px-8">
