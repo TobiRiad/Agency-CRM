@@ -55,6 +55,8 @@ export interface Campaign extends BaseRecord {
   // Firecrawl settings (for leads campaigns)
   enable_firecrawl?: boolean; // Enable website scraping
   firecrawl_pages?: FirecrawlPageType[]; // Which pages to scrape
+  // Hunter.io settings (for leads campaigns)
+  enable_hunter?: boolean; // Enable Hunter.io people discovery (default: true)
   // Expanded relations
   expand?: {
     user?: User;

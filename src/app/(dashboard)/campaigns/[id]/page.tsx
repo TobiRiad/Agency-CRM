@@ -166,6 +166,26 @@ export default function CampaignPage() {
   const [duplicateCompany, setDuplicateCompany] = useState<Company | null>(null);
   const [showDuplicateWarning, setShowDuplicateWarning] = useState(false);
 
+  // Real-time duplicate check state
+  const [duplicateStatus, setDuplicateStatus] = useState<{
+    checking: boolean;
+    exists: boolean;
+    matchType: 'name' | 'website' | null;
+    companyName?: string;
+  }>({ checking: false, exists: false, matchType: null });
+
+  // Hunter.io state
+  const [hunterPeople, setHunterPeople] = useState<Array<{
+    email: string;
+    first_name: string;
+    last_name: string;
+    position: string;
+    confidence: number;
+  }>>([]);
+  const [selectedHunterPeople, setSelectedHunterPeople] = useState<Set<string>>(new Set());
+  const [isSearchingHunter, setIsSearchingHunter] = useState(false);
+  const [hunterSearched, setHunterSearched] = useState(false);
+
   // Leads-specific state
   const [companyContacts, setCompanyContacts] = useState<Map<string, Contact[]>>(new Map());
   const [aiConfigs, setAiConfigs] = useState<AIScoringConfig[]>([]);
@@ -306,6 +326,122 @@ export default function CampaignPage() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Debounced real-time duplicate check
+  useEffect(() => {
+    // Only check if we have a name or website
+    if (!newCompany.name.trim() && !newCompany.website.trim()) {
+      setDuplicateStatus({ checking: false, exists: false, matchType: null });
+      return;
+    }
+
+    // Don't check if dialog is not open or we're showing other warnings
+    if (!isAddCompanyOpen || showDuplicateWarning || showUrlPreview) {
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(async () => {
+      setDuplicateStatus(prev => ({ ...prev, checking: true }));
+      try {
+        const response = await fetch('/api/companies/check-duplicate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: newCompany.name.trim(),
+            website: newCompany.website.trim(),
+            campaignId,
+          }),
+          signal: controller.signal,
+        });
+        const data = await response.json();
+        if (data.success) {
+          setDuplicateStatus({
+            checking: false,
+            exists: data.exists,
+            matchType: data.matchType,
+            companyName: data.companyName,
+          });
+        }
+      } catch (error) {
+        if ((error as Error).name !== 'AbortError') {
+          setDuplicateStatus({ checking: false, exists: false, matchType: null });
+        }
+      }
+    }, 400);
+
+    return () => {
+      clearTimeout(timeoutId);
+      controller.abort();
+    };
+  }, [newCompany.name, newCompany.website, campaignId, isAddCompanyOpen, showDuplicateWarning, showUrlPreview]);
+
+  // Hunter.io search function
+  const handleHunterSearch = async () => {
+    if (!newCompany.website.trim()) return;
+
+    setIsSearchingHunter(true);
+    setHunterPeople([]);
+    setSelectedHunterPeople(new Set());
+
+    try {
+      const response = await fetch('/api/hunter/domain-search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ domain: newCompany.website }),
+      });
+      const data = await response.json();
+
+      if (data.success && data.people?.length > 0) {
+        setHunterPeople(data.people);
+        toast({
+          title: "People Found",
+          description: `Found ${data.people.length} people at ${data.domain}`,
+        });
+      } else if (data.success) {
+        toast({
+          title: "No People Found",
+          description: "Hunter.io didn't find any email addresses for this domain.",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Search Failed",
+          description: data.error || "Failed to search Hunter.io",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error("Hunter search error:", error);
+      toast({
+        title: "Error",
+        description: "Failed to search Hunter.io",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSearchingHunter(false);
+      setHunterSearched(true);
+    }
+  };
+
+  // Add selected Hunter people to the newCompanyPeople list
+  const handleAddHunterPeople = () => {
+    const selected = hunterPeople.filter(p => selectedHunterPeople.has(p.email));
+    const newPeople = selected.map(p => ({
+      id: crypto.randomUUID(),
+      email: p.email,
+      first_name: p.first_name,
+      last_name: p.last_name,
+      title: p.position,
+    }));
+    setNewCompanyPeople([...newCompanyPeople, ...newPeople]);
+    setHunterPeople([]);
+    setSelectedHunterPeople(new Set());
+    toast({
+      title: "People Added",
+      description: `Added ${newPeople.length} people to the company`,
+    });
+  };
 
   const handleAddContact = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1231,14 +1367,28 @@ export default function CampaignPage() {
                     <div className="space-y-4 py-4">
                       <div className="space-y-2">
                         <Label htmlFor="company_name">Company Name *</Label>
-                        <Input
-                          id="company_name"
-                          value={newCompany.name}
-                          onChange={(e) =>
-                            setNewCompany({ ...newCompany, name: e.target.value })
-                          }
-                          required
-                        />
+                        <div className="relative">
+                          <Input
+                            id="company_name"
+                            value={newCompany.name}
+                            onChange={(e) => {
+                              setNewCompany({ ...newCompany, name: e.target.value });
+                              setHunterPeople([]);
+                              setHunterSearched(false);
+                            }}
+                            required
+                            className={duplicateStatus.exists && duplicateStatus.matchType === 'name' ? 'border-red-500 focus-visible:ring-red-500' : (newCompany.name.trim() && !duplicateStatus.checking && !duplicateStatus.exists ? 'border-green-500 focus-visible:ring-green-500' : '')}
+                          />
+                          {duplicateStatus.checking && newCompany.name.trim() && (
+                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">Checking...</span>
+                          )}
+                        </div>
+                        {duplicateStatus.exists && duplicateStatus.matchType === 'name' && (
+                          <p className="text-xs text-red-500">Company "{duplicateStatus.companyName}" already exists</p>
+                        )}
+                        {!duplicateStatus.checking && !duplicateStatus.exists && newCompany.name.trim() && (
+                          <p className="text-xs text-green-500 flex items-center gap-1"><Check className="h-3 w-3" /> Available</p>
+                        )}
                       </div>
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
@@ -1248,10 +1398,16 @@ export default function CampaignPage() {
                             type="url"
                             placeholder="https://example.com"
                             value={newCompany.website}
-                            onChange={(e) =>
-                              setNewCompany({ ...newCompany, website: e.target.value })
-                            }
+                            onChange={(e) => {
+                              setNewCompany({ ...newCompany, website: e.target.value });
+                              setHunterPeople([]);
+                              setHunterSearched(false);
+                            }}
+                            className={duplicateStatus.exists && duplicateStatus.matchType === 'website' ? 'border-red-500 focus-visible:ring-red-500' : (newCompany.website.trim() && !duplicateStatus.checking && !duplicateStatus.exists ? 'border-green-500 focus-visible:ring-green-500' : '')}
                           />
+                          {duplicateStatus.exists && duplicateStatus.matchType === 'website' && (
+                            <p className="text-xs text-red-500">Website matches "{duplicateStatus.companyName}"</p>
+                          )}
                         </div>
                         <div className="space-y-2">
                           <Label htmlFor="email">Company Email</Label>
@@ -1330,6 +1486,70 @@ export default function CampaignPage() {
                               ))}
                             </SelectContent>
                           </Select>
+                        </div>
+                      )}
+
+                      {/* Hunter.io Section */}
+                      {campaign?.enable_hunter !== false && newCompany.website.trim() && (
+                        <div className="space-y-3 pt-4 border-t">
+                          <div className="flex items-center justify-between">
+                            <Label className="text-base font-medium">Find People (Hunter.io)</Label>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={handleHunterSearch}
+                              disabled={isSearchingHunter || !newCompany.website.trim()}
+                            >
+                              {isSearchingHunter ? (
+                                <><Loader2 className="h-3 w-3 mr-1 animate-spin" />Searching...</>
+                              ) : (
+                                <><Search className="h-3 w-3 mr-1" />Find People</>
+                              )}
+                            </Button>
+                          </div>
+
+                          {hunterPeople.length > 0 && (
+                            <div className="space-y-2">
+                              <div className="max-h-48 overflow-y-auto border rounded-lg divide-y">
+                                {hunterPeople.map((person) => (
+                                  <div key={person.email} className="flex items-center gap-3 p-2 hover:bg-muted/50">
+                                    <Checkbox
+                                      checked={selectedHunterPeople.has(person.email)}
+                                      onCheckedChange={(checked) => {
+                                        const newSet = new Set(selectedHunterPeople);
+                                        if (checked) { newSet.add(person.email); } else { newSet.delete(person.email); }
+                                        setSelectedHunterPeople(newSet);
+                                      }}
+                                    />
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-sm font-medium truncate">
+                                        {person.first_name} {person.last_name}
+                                        {person.position && <span className="text-muted-foreground"> · {person.position}</span>}
+                                      </p>
+                                      <p className="text-xs text-muted-foreground truncate">{person.email}</p>
+                                    </div>
+                                    <Badge variant="outline" className="text-xs">{person.confidence}%</Badge>
+                                  </div>
+                                ))}
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs text-muted-foreground">{selectedHunterPeople.size} selected</span>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  onClick={handleAddHunterPeople}
+                                  disabled={selectedHunterPeople.size === 0}
+                                >
+                                  Add Selected
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+
+                          {hunterSearched && hunterPeople.length === 0 && !isSearchingHunter && (
+                            <p className="text-xs text-muted-foreground">No people found. You can add them manually below.</p>
+                          )}
                         </div>
                       )}
 

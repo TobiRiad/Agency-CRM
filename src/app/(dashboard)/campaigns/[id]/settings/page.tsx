@@ -97,6 +97,7 @@ export default function CampaignSettingsPage() {
     ai_opener_prompt: "",
     enable_firecrawl: false,
     firecrawl_pages: ["homepage", "about"] as FirecrawlPageType[],
+    enable_hunter: true,
   });
 
   // Industry options form
@@ -157,7 +158,7 @@ export default function CampaignSettingsPage() {
     try {
       const pb = getClientPB();
       const campaignData = await getCampaign(pb, campaignId);
-      
+
       // Only load batches for outreach campaigns (not leads)
       const batchesPromise = campaignData.kind === 'leads'
         ? Promise.resolve([])
@@ -178,6 +179,7 @@ export default function CampaignSettingsPage() {
         ai_opener_prompt: campaignData.ai_opener_prompt || "",
         enable_firecrawl: campaignData.enable_firecrawl || false,
         firecrawl_pages: campaignData.firecrawl_pages || ["homepage", "about"],
+        enable_hunter: campaignData.enable_hunter !== false,
       });
       setCustomFields(fieldsData);
       setFunnelStages(stagesData);
@@ -218,6 +220,7 @@ export default function CampaignSettingsPage() {
         ai_opener_prompt: campaignForm.ai_opener_prompt,
         enable_firecrawl: campaignForm.enable_firecrawl,
         firecrawl_pages: campaignForm.firecrawl_pages,
+        enable_hunter: campaignForm.enable_hunter,
       });
       toast({
         title: "Settings saved",
@@ -434,7 +437,7 @@ export default function CampaignSettingsPage() {
 
       setNewBatch({ name: "" });
       setIsAddBatchOpen(false);
-      
+
       // Reload data to show the new batch
       await loadData();
     } catch (error) {
@@ -500,7 +503,7 @@ export default function CampaignSettingsPage() {
     setIsSaving(true);
     try {
       const pb = getClientPB();
-      
+
       if (editingAIConfig) {
         await updateAIScoringConfig(pb, editingAIConfig.id, {
           name: aiConfigForm.name,
@@ -883,7 +886,7 @@ Output ONLY the JSON configuration with the \`ai_opener_prompt\` field.`;
     reader.onload = (event) => {
       try {
         const json = JSON.parse(event.target?.result as string);
-        
+
         // Validate and apply the config
         setAiConfigForm({
           name: json.name || "",
@@ -909,7 +912,7 @@ Output ONLY the JSON configuration with the \`ai_opener_prompt\` field.`;
           model: json.model || "gpt-4o-mini",
           temperature: json.temperature ?? 0.3,
         });
-        
+
         setIsAddAIConfigOpen(true);
         toast({
           title: "JSON Loaded",
@@ -926,7 +929,7 @@ Output ONLY the JSON configuration with the \`ai_opener_prompt\` field.`;
       }
     };
     reader.readAsText(file);
-    
+
     // Reset the input so the same file can be uploaded again
     e.target.value = "";
   };
@@ -940,7 +943,7 @@ Output ONLY the JSON configuration with the \`ai_opener_prompt\` field.`;
     reader.onload = (event) => {
       try {
         const json = JSON.parse(event.target?.result as string);
-        
+
         if (json.ai_opener_prompt) {
           setCampaignForm({
             ...campaignForm,
@@ -968,7 +971,7 @@ Output ONLY the JSON configuration with the \`ai_opener_prompt\` field.`;
       }
     };
     reader.readAsText(file);
-    
+
     // Reset the input so the same file can be uploaded again
     e.target.value = "";
   };
@@ -1066,6 +1069,23 @@ Output ONLY the JSON configuration with the \`ai_opener_prompt\` field.`;
                     rows={3}
                   />
                 </div>
+                {campaign?.kind === 'leads' && (
+                  <div className="flex items-center justify-between rounded-lg border p-4">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="enable_hunter">Enable Hunter.io</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Discover email addresses at company domains when adding new leads
+                      </p>
+                    </div>
+                    <Switch
+                      id="enable_hunter"
+                      checked={campaignForm.enable_hunter}
+                      onCheckedChange={(checked) =>
+                        setCampaignForm({ ...campaignForm, enable_hunter: checked })
+                      }
+                    />
+                  </div>
+                )}
                 {(campaign?.kind === 'outreach' || !campaign?.kind) && (
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
@@ -1265,7 +1285,7 @@ Output ONLY the JSON configuration with the \`ai_opener_prompt\` field.`;
                         ))}
                       </div>
                       <p className="text-xs text-muted-foreground mt-2">
-                        Note: Homepage is always included. The system uses pattern matching to find the URLs 
+                        Note: Homepage is always included. The system uses pattern matching to find the URLs
                         (e.g., /about, /about-us, /company for the About page).
                       </p>
                     </div>
@@ -1489,11 +1509,10 @@ Output ONLY the JSON configuration with the \`ai_opener_prompt\` field.`;
                               <button
                                 key={color}
                                 type="button"
-                                className={`w-8 h-8 rounded-full border-2 transition-all ${
-                                  newStage.color === color
-                                    ? "border-foreground scale-110"
-                                    : "border-transparent hover:border-muted-foreground"
-                                }`}
+                                className={`w-8 h-8 rounded-full border-2 transition-all ${newStage.color === color
+                                  ? "border-foreground scale-110"
+                                  : "border-transparent hover:border-muted-foreground"
+                                  }`}
                                 style={{ backgroundColor: color }}
                                 onClick={() => setNewStage({ ...newStage, color })}
                               />
@@ -1714,500 +1733,500 @@ Output ONLY the JSON configuration with the \`ai_opener_prompt\` field.`;
                         Upload JSON
                       </Button>
                     </div>
-                  <Dialog open={isAddAIConfigOpen} onOpenChange={(open) => {
-                    setIsAddAIConfigOpen(open);
-                    if (!open) {
-                      setEditingAIConfig(null);
-                      setAiConfigForm({
-                        name: "",
-                        system_prompt: "",
-                        enable_score: true,
-                        score_min: 0,
-                        score_max: 100,
-                        enable_classification: true,
-                        classification_label: "Industry",
-                        classification_options: [],
-                        custom_outputs: [],
-                        model: "gpt-4o-mini",
-                        temperature: 0.3,
-                      });
-                    }
-                  }}>
-                    <DialogTrigger asChild>
-                      <Button>
-                        <Plus className="mr-2 h-4 w-4" />
-                        Add AI Config
-                      </Button>
-                    </DialogTrigger>
-                    <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-                      <form onSubmit={handleSaveAIConfig}>
+                    <Dialog open={isAddAIConfigOpen} onOpenChange={(open) => {
+                      setIsAddAIConfigOpen(open);
+                      if (!open) {
+                        setEditingAIConfig(null);
+                        setAiConfigForm({
+                          name: "",
+                          system_prompt: "",
+                          enable_score: true,
+                          score_min: 0,
+                          score_max: 100,
+                          enable_classification: true,
+                          classification_label: "Industry",
+                          classification_options: [],
+                          custom_outputs: [],
+                          model: "gpt-4o-mini",
+                          temperature: 0.3,
+                        });
+                      }
+                    }}>
+                      <DialogTrigger asChild>
+                        <Button>
+                          <Plus className="mr-2 h-4 w-4" />
+                          Add AI Config
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+                        <form onSubmit={handleSaveAIConfig}>
+                          <DialogHeader>
+                            <DialogTitle>
+                              {editingAIConfig ? "Edit" : "Create"} AI Scoring Configuration
+                            </DialogTitle>
+                            <DialogDescription>
+                              Define how AI should evaluate and score your leads.
+                            </DialogDescription>
+                          </DialogHeader>
+                          <div className="space-y-4 py-4">
+                            <div className="space-y-2">
+                              <Label htmlFor="ai_name">Configuration Name *</Label>
+                              <Input
+                                id="ai_name"
+                                value={aiConfigForm.name}
+                                onChange={(e) =>
+                                  setAiConfigForm({ ...aiConfigForm, name: e.target.value })
+                                }
+                                placeholder="e.g., SaaS ICP Scorer"
+                                required
+                              />
+                            </div>
+
+                            <div className="space-y-2">
+                              <Label htmlFor="system_prompt">System Prompt / Criteria *</Label>
+                              <Textarea
+                                id="system_prompt"
+                                value={aiConfigForm.system_prompt}
+                                onChange={(e) =>
+                                  setAiConfigForm({ ...aiConfigForm, system_prompt: e.target.value })
+                                }
+                                placeholder="You are evaluating SaaS companies. Score them based on: 1) B2B model, 2) Recurring revenue, 3) Team size..."
+                                rows={8}
+                                required
+                              />
+                              <p className="text-xs text-muted-foreground">
+                                Describe the criteria and evaluation framework for scoring leads.
+                              </p>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="space-y-2">
+                                <Label htmlFor="model">Model</Label>
+                                <Select
+                                  value={aiConfigForm.model}
+                                  onValueChange={(value) =>
+                                    setAiConfigForm({ ...aiConfigForm, model: value })
+                                  }
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="gpt-4o-mini">GPT-4o Mini (Fast, Cost-effective)</SelectItem>
+                                    <SelectItem value="gpt-4o">GPT-4o (Most Capable)</SelectItem>
+                                    <SelectItem value="gpt-4-turbo">GPT-4 Turbo</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="space-y-2">
+                                <Label htmlFor="temperature">Temperature: {aiConfigForm.temperature}</Label>
+                                <Input
+                                  id="temperature"
+                                  type="range"
+                                  min="0"
+                                  max="2"
+                                  step="0.1"
+                                  value={aiConfigForm.temperature}
+                                  onChange={(e) =>
+                                    setAiConfigForm({ ...aiConfigForm, temperature: parseFloat(e.target.value) })
+                                  }
+                                />
+                                <p className="text-xs text-muted-foreground">
+                                  Lower = more consistent, Higher = more creative
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="space-y-4 border-t pt-4">
+                              <div className="flex items-center space-x-2">
+                                <input
+                                  type="checkbox"
+                                  id="enable_score"
+                                  checked={aiConfigForm.enable_score}
+                                  onChange={(e) =>
+                                    setAiConfigForm({ ...aiConfigForm, enable_score: e.target.checked })
+                                  }
+                                  className="rounded"
+                                />
+                                <Label htmlFor="enable_score" className="font-medium">
+                                  Enable Score
+                                </Label>
+                              </div>
+                              {aiConfigForm.enable_score && (
+                                <div className="grid grid-cols-2 gap-4 pl-6">
+                                  <div className="space-y-2">
+                                    <Label htmlFor="score_min">Min Score</Label>
+                                    <Input
+                                      id="score_min"
+                                      type="number"
+                                      min="0"
+                                      value={aiConfigForm.score_min}
+                                      onChange={(e) =>
+                                        setAiConfigForm({ ...aiConfigForm, score_min: parseInt(e.target.value) || 0 })
+                                      }
+                                    />
+                                  </div>
+                                  <div className="space-y-2">
+                                    <Label htmlFor="score_max">Max Score</Label>
+                                    <Input
+                                      id="score_max"
+                                      type="number"
+                                      min="0"
+                                      value={aiConfigForm.score_max}
+                                      onChange={(e) =>
+                                        setAiConfigForm({ ...aiConfigForm, score_max: parseInt(e.target.value) || 100 })
+                                      }
+                                    />
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="space-y-4 border-t pt-4">
+                              <div className="flex items-center space-x-2">
+                                <input
+                                  type="checkbox"
+                                  id="enable_classification"
+                                  checked={aiConfigForm.enable_classification}
+                                  onChange={(e) =>
+                                    setAiConfigForm({ ...aiConfigForm, enable_classification: e.target.checked })
+                                  }
+                                  className="rounded"
+                                />
+                                <Label htmlFor="enable_classification" className="font-medium">
+                                  Enable Classification
+                                </Label>
+                              </div>
+                              {aiConfigForm.enable_classification && (
+                                <div className="space-y-4 pl-6">
+                                  <div className="space-y-2">
+                                    <Label htmlFor="classification_label">Classification Label</Label>
+                                    <Input
+                                      id="classification_label"
+                                      value={aiConfigForm.classification_label}
+                                      onChange={(e) =>
+                                        setAiConfigForm({ ...aiConfigForm, classification_label: e.target.value })
+                                      }
+                                      placeholder="e.g., Industry, Category, Type"
+                                    />
+                                  </div>
+                                  <div className="space-y-2">
+                                    <Label>Classification Options</Label>
+                                    <div className="flex gap-2">
+                                      <Input
+                                        value={newClassificationOption}
+                                        onChange={(e) => setNewClassificationOption(e.target.value)}
+                                        onKeyDown={(e) => {
+                                          if (e.key === "Enter") {
+                                            e.preventDefault();
+                                            addClassificationOption();
+                                          }
+                                        }}
+                                        placeholder="e.g., SaaS"
+                                      />
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        onClick={addClassificationOption}
+                                      >
+                                        <Plus className="h-4 w-4" />
+                                      </Button>
+                                    </div>
+                                    <div className="flex flex-wrap gap-2 mt-2">
+                                      {aiConfigForm.classification_options.map((option) => (
+                                        <Badge key={option} variant="secondary" className="flex items-center gap-1">
+                                          {option}
+                                          <button
+                                            type="button"
+                                            onClick={() => removeClassificationOption(option)}
+                                            className="ml-1 hover:text-destructive"
+                                          >
+                                            <X className="h-3 w-3" />
+                                          </button>
+                                        </Badge>
+                                      ))}
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Custom Outputs Section */}
+                            <div className="space-y-4 border-t pt-4">
+                              <div className="flex items-center justify-between">
+                                <Label className="font-medium text-base">Custom Output Fields</Label>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setIsAddCustomOutputOpen(true)}
+                                >
+                                  <Plus className="h-4 w-4 mr-1" />
+                                  Add Custom Output
+                                </Button>
+                              </div>
+
+                              {aiConfigForm.custom_outputs?.length > 0 && (
+                                <div className="space-y-2">
+                                  {(aiConfigForm.custom_outputs || []).map((output) => (
+                                    <div key={output.id} className="flex items-start justify-between p-3 border rounded-lg">
+                                      <div className="flex-1">
+                                        <div className="flex items-center gap-2">
+                                          <span className="font-medium">{output.label}</span>
+                                          <Badge variant="secondary">{output.type}</Badge>
+                                        </div>
+                                        <p className="text-sm text-muted-foreground mt-1">{output.description}</p>
+                                        {output.type === "list" && output.list_options && output.list_options.length > 0 && (
+                                          <div className="flex flex-wrap gap-1 mt-2">
+                                            {output.list_options.map(opt => (
+                                              <Badge key={opt} variant="outline" className="text-xs">{opt}</Badge>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon"
+                                        className="text-muted-foreground hover:text-destructive"
+                                        onClick={() => handleRemoveCustomOutput(output.id)}
+                                      >
+                                        <Trash2 className="h-4 w-4" />
+                                      </Button>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          <DialogFooter>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => {
+                                setIsAddAIConfigOpen(false);
+                                setEditingAIConfig(null);
+                              }}
+                            >
+                              Cancel
+                            </Button>
+                            <Button type="submit" disabled={isSaving}>
+                              {isSaving ? "Saving..." : editingAIConfig ? "Update" : "Create"} Config
+                            </Button>
+                          </DialogFooter>
+                        </form>
+                      </DialogContent>
+                    </Dialog>
+
+                    {/* Add Custom Output Dialog */}
+                    <Dialog open={isAddCustomOutputOpen} onOpenChange={setIsAddCustomOutputOpen}>
+                      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
                         <DialogHeader>
-                          <DialogTitle>
-                            {editingAIConfig ? "Edit" : "Create"} AI Scoring Configuration
-                          </DialogTitle>
+                          <DialogTitle>Add Custom Output Field</DialogTitle>
                           <DialogDescription>
-                            Define how AI should evaluate and score your leads.
+                            Define a custom field that the AI should return in its response.
                           </DialogDescription>
                         </DialogHeader>
                         <div className="space-y-4 py-4">
-                          <div className="space-y-2">
-                            <Label htmlFor="ai_name">Configuration Name *</Label>
-                            <Input
-                              id="ai_name"
-                              value={aiConfigForm.name}
-                              onChange={(e) =>
-                                setAiConfigForm({ ...aiConfigForm, name: e.target.value })
-                              }
-                              placeholder="e.g., SaaS ICP Scorer"
-                              required
-                            />
-                          </div>
-
-                          <div className="space-y-2">
-                            <Label htmlFor="system_prompt">System Prompt / Criteria *</Label>
-                            <Textarea
-                              id="system_prompt"
-                              value={aiConfigForm.system_prompt}
-                              onChange={(e) =>
-                                setAiConfigForm({ ...aiConfigForm, system_prompt: e.target.value })
-                              }
-                              placeholder="You are evaluating SaaS companies. Score them based on: 1) B2B model, 2) Recurring revenue, 3) Team size..."
-                              rows={8}
-                              required
-                            />
-                            <p className="text-xs text-muted-foreground">
-                              Describe the criteria and evaluation framework for scoring leads.
-                            </p>
-                          </div>
-
                           <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-2">
-                              <Label htmlFor="model">Model</Label>
-                              <Select
-                                value={aiConfigForm.model}
-                                onValueChange={(value) =>
-                                  setAiConfigForm({ ...aiConfigForm, model: value })
+                              <Label htmlFor="custom_name">Field Name (JSON key) *</Label>
+                              <Input
+                                id="custom_name"
+                                value={newCustomOutput.name || ""}
+                                onChange={(e) =>
+                                  setNewCustomOutput({ ...newCustomOutput, name: e.target.value })
                                 }
-                              >
-                                <SelectTrigger>
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="gpt-4o-mini">GPT-4o Mini (Fast, Cost-effective)</SelectItem>
-                                  <SelectItem value="gpt-4o">GPT-4o (Most Capable)</SelectItem>
-                                  <SelectItem value="gpt-4-turbo">GPT-4 Turbo</SelectItem>
-                                </SelectContent>
-                              </Select>
+                                placeholder="e.g., industry_fit"
+                                required
+                              />
+                              <p className="text-xs text-muted-foreground">Used as the JSON key in AI response</p>
                             </div>
                             <div className="space-y-2">
-                              <Label htmlFor="temperature">Temperature: {aiConfigForm.temperature}</Label>
+                              <Label htmlFor="custom_label">Display Label *</Label>
                               <Input
-                                id="temperature"
-                                type="range"
-                                min="0"
-                                max="2"
-                                step="0.1"
-                                value={aiConfigForm.temperature}
+                                id="custom_label"
+                                value={newCustomOutput.label || ""}
                                 onChange={(e) =>
-                                  setAiConfigForm({ ...aiConfigForm, temperature: parseFloat(e.target.value) })
+                                  setNewCustomOutput({ ...newCustomOutput, label: e.target.value })
                                 }
+                                placeholder="e.g., Industry Fit"
+                                required
                               />
-                              <p className="text-xs text-muted-foreground">
-                                Lower = more consistent, Higher = more creative
-                              </p>
+                              <p className="text-xs text-muted-foreground">Shown in the table</p>
                             </div>
                           </div>
 
-                          <div className="space-y-4 border-t pt-4">
-                            <div className="flex items-center space-x-2">
-                              <input
-                                type="checkbox"
-                                id="enable_score"
-                                checked={aiConfigForm.enable_score}
-                                onChange={(e) =>
-                                  setAiConfigForm({ ...aiConfigForm, enable_score: e.target.checked })
-                                }
-                                className="rounded"
-                              />
-                              <Label htmlFor="enable_score" className="font-medium">
-                                Enable Score
-                              </Label>
-                            </div>
-                            {aiConfigForm.enable_score && (
-                              <div className="grid grid-cols-2 gap-4 pl-6">
-                                <div className="space-y-2">
-                                  <Label htmlFor="score_min">Min Score</Label>
-                                  <Input
-                                    id="score_min"
-                                    type="number"
-                                    min="0"
-                                    value={aiConfigForm.score_min}
-                                    onChange={(e) =>
-                                      setAiConfigForm({ ...aiConfigForm, score_min: parseInt(e.target.value) || 0 })
-                                    }
-                                  />
-                                </div>
-                                <div className="space-y-2">
-                                  <Label htmlFor="score_max">Max Score</Label>
-                                  <Input
-                                    id="score_max"
-                                    type="number"
-                                    min="0"
-                                    value={aiConfigForm.score_max}
-                                    onChange={(e) =>
-                                      setAiConfigForm({ ...aiConfigForm, score_max: parseInt(e.target.value) || 100 })
-                                    }
-                                  />
-                                </div>
-                              </div>
-                            )}
+                          <div className="space-y-2">
+                            <Label htmlFor="custom_description">Description *</Label>
+                            <Textarea
+                              id="custom_description"
+                              value={newCustomOutput.description || ""}
+                              onChange={(e) =>
+                                setNewCustomOutput({ ...newCustomOutput, description: e.target.value })
+                              }
+                              placeholder="Describe what the AI should return for this field..."
+                              rows={3}
+                              required
+                            />
                           </div>
 
-                          <div className="space-y-4 border-t pt-4">
-                            <div className="flex items-center space-x-2">
-                              <input
-                                type="checkbox"
-                                id="enable_classification"
-                                checked={aiConfigForm.enable_classification}
-                                onChange={(e) =>
-                                  setAiConfigForm({ ...aiConfigForm, enable_classification: e.target.checked })
-                                }
-                                className="rounded"
-                              />
-                              <Label htmlFor="enable_classification" className="font-medium">
-                                Enable Classification
-                              </Label>
-                            </div>
-                            {aiConfigForm.enable_classification && (
-                              <div className="space-y-4 pl-6">
-                                <div className="space-y-2">
-                                  <Label htmlFor="classification_label">Classification Label</Label>
-                                  <Input
-                                    id="classification_label"
-                                    value={aiConfigForm.classification_label}
-                                    onChange={(e) =>
-                                      setAiConfigForm({ ...aiConfigForm, classification_label: e.target.value })
-                                    }
-                                    placeholder="e.g., Industry, Category, Type"
-                                  />
-                                </div>
-                                <div className="space-y-2">
-                                  <Label>Classification Options</Label>
-                                  <div className="flex gap-2">
-                                    <Input
-                                      value={newClassificationOption}
-                                      onChange={(e) => setNewClassificationOption(e.target.value)}
-                                      onKeyDown={(e) => {
-                                        if (e.key === "Enter") {
-                                          e.preventDefault();
-                                          addClassificationOption();
-                                        }
-                                      }}
-                                      placeholder="e.g., SaaS"
-                                    />
-                                    <Button
-                                      type="button"
-                                      variant="outline"
-                                      onClick={addClassificationOption}
-                                    >
-                                      <Plus className="h-4 w-4" />
-                                    </Button>
-                                  </div>
-                                  <div className="flex flex-wrap gap-2 mt-2">
-                                    {aiConfigForm.classification_options.map((option) => (
-                                      <Badge key={option} variant="secondary" className="flex items-center gap-1">
-                                        {option}
-                                        <button
-                                          type="button"
-                                          onClick={() => removeClassificationOption(option)}
-                                          className="ml-1 hover:text-destructive"
-                                        >
-                                          <X className="h-3 w-3" />
-                                        </button>
-                                      </Badge>
-                                    ))}
-                                  </div>
-                                </div>
-                              </div>
-                            )}
+                          <div className="space-y-2">
+                            <Label htmlFor="custom_type">Field Type *</Label>
+                            <Select
+                              value={newCustomOutput.type || "text"}
+                              onValueChange={(value: CustomOutputType) =>
+                                setNewCustomOutput({ ...newCustomOutput, type: value })
+                              }
+                            >
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="text">Text</SelectItem>
+                                <SelectItem value="number">Number</SelectItem>
+                                <SelectItem value="boolean">Boolean (True/False/Unknown)</SelectItem>
+                                <SelectItem value="list">List (Select from options)</SelectItem>
+                                <SelectItem value="nested_json">Nested JSON</SelectItem>
+                              </SelectContent>
+                            </Select>
                           </div>
 
-                          {/* Custom Outputs Section */}
-                          <div className="space-y-4 border-t pt-4">
-                            <div className="flex items-center justify-between">
-                              <Label className="font-medium text-base">Custom Output Fields</Label>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={() => setIsAddCustomOutputOpen(true)}
-                              >
-                                <Plus className="h-4 w-4 mr-1" />
-                                Add Custom Output
-                              </Button>
-                            </div>
-                            
-                            {aiConfigForm.custom_outputs?.length > 0 && (
+                          {/* List type options */}
+                          {newCustomOutput.type === "list" && (
+                            <div className="space-y-4 border-t pt-4">
                               <div className="space-y-2">
-                                {(aiConfigForm.custom_outputs || []).map((output) => (
-                                  <div key={output.id} className="flex items-start justify-between p-3 border rounded-lg">
-                                    <div className="flex-1">
-                                      <div className="flex items-center gap-2">
-                                        <span className="font-medium">{output.label}</span>
-                                        <Badge variant="secondary">{output.type}</Badge>
-                                      </div>
-                                      <p className="text-sm text-muted-foreground mt-1">{output.description}</p>
-                                      {output.type === "list" && output.list_options && output.list_options.length > 0 && (
-                                        <div className="flex flex-wrap gap-1 mt-2">
-                                          {output.list_options.map(opt => (
-                                            <Badge key={opt} variant="outline" className="text-xs">{opt}</Badge>
-                                          ))}
-                                        </div>
-                                      )}
-                                    </div>
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="icon"
-                                      className="text-muted-foreground hover:text-destructive"
-                                      onClick={() => handleRemoveCustomOutput(output.id)}
-                                    >
-                                      <Trash2 className="h-4 w-4" />
-                                    </Button>
+                                <Label>List Options</Label>
+                                <div className="flex gap-2">
+                                  <Input
+                                    value={newListOption}
+                                    onChange={(e) => setNewListOption(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") {
+                                        e.preventDefault();
+                                        addListOption();
+                                      }
+                                    }}
+                                    placeholder="Add option..."
+                                  />
+                                  <Button type="button" variant="outline" onClick={addListOption}>
+                                    <Plus className="h-4 w-4" />
+                                  </Button>
+                                </div>
+                                <div className="flex flex-wrap gap-2 mt-2">
+                                  {newCustomOutput.list_options?.map((opt) => (
+                                    <Badge key={opt} variant="secondary" className="flex items-center gap-1">
+                                      {opt}
+                                      <button
+                                        type="button"
+                                        onClick={() => removeListOption(opt)}
+                                        className="ml-1 hover:text-destructive"
+                                      >
+                                        <X className="h-3 w-3" />
+                                      </button>
+                                    </Badge>
+                                  ))}
+                                </div>
+                              </div>
+                              <div className="space-y-2">
+                                <Label htmlFor="list_description">How to Pick from List</Label>
+                                <Input
+                                  id="list_description"
+                                  value={newCustomOutput.list_description || ""}
+                                  onChange={(e) =>
+                                    setNewCustomOutput({ ...newCustomOutput, list_description: e.target.value })
+                                  }
+                                  placeholder="e.g., Select the most appropriate option based on..."
+                                />
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Boolean type options */}
+                          {newCustomOutput.type === "boolean" && (
+                            <div className="space-y-2 border-t pt-4">
+                              <Label>Boolean Options</Label>
+                              <div className="flex gap-2">
+                                {(['true', 'false', 'unknown'] as const).map((opt) => (
+                                  <div key={opt} className="flex items-center space-x-2">
+                                    <input
+                                      type="checkbox"
+                                      checked={newCustomOutput.boolean_options?.includes(opt) || false}
+                                      onChange={(e) => {
+                                        const current = newCustomOutput.boolean_options || [];
+                                        const updated = e.target.checked
+                                          ? [...current, opt]
+                                          : current.filter(o => o !== opt);
+                                        setNewCustomOutput({ ...newCustomOutput, boolean_options: updated });
+                                      }}
+                                      className="rounded"
+                                    />
+                                    <Label className="font-normal capitalize">{opt}</Label>
                                   </div>
                                 ))}
                               </div>
-                            )}
-                          </div>
+                            </div>
+                          )}
+
+                          {/* Nested JSON type options */}
+                          {newCustomOutput.type === "nested_json" && (
+                            <div className="space-y-4 border-t pt-4">
+                              <div className="space-y-2">
+                                <Label htmlFor="json_max_pairs">Max Key-Value Pairs</Label>
+                                <Input
+                                  id="json_max_pairs"
+                                  type="number"
+                                  min="1"
+                                  max="50"
+                                  value={newCustomOutput.nested_json_max_pairs || 10}
+                                  onChange={(e) =>
+                                    setNewCustomOutput({
+                                      ...newCustomOutput,
+                                      nested_json_max_pairs: parseInt(e.target.value) || 10,
+                                    })
+                                  }
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label htmlFor="json_description">JSON Structure Description</Label>
+                                <Textarea
+                                  id="json_description"
+                                  value={newCustomOutput.nested_json_description || ""}
+                                  onChange={(e) =>
+                                    setNewCustomOutput({ ...newCustomOutput, nested_json_description: e.target.value })
+                                  }
+                                  placeholder="e.g., Key-value pairs where keys are tags and values are relevance scores..."
+                                  rows={3}
+                                />
+                              </div>
+                            </div>
+                          )}
                         </div>
                         <DialogFooter>
                           <Button
                             type="button"
                             variant="outline"
                             onClick={() => {
-                              setIsAddAIConfigOpen(false);
-                              setEditingAIConfig(null);
+                              setIsAddCustomOutputOpen(false);
+                              setNewCustomOutput({
+                                name: "",
+                                label: "",
+                                description: "",
+                                type: "text",
+                                list_options: [],
+                                boolean_options: ['true', 'false', 'unknown'],
+                                nested_json_max_pairs: 10,
+                              });
                             }}
                           >
                             Cancel
                           </Button>
-                          <Button type="submit" disabled={isSaving}>
-                            {isSaving ? "Saving..." : editingAIConfig ? "Update" : "Create"} Config
+                          <Button type="button" onClick={handleAddCustomOutput}>
+                            Add Field
                           </Button>
                         </DialogFooter>
-                      </form>
-                    </DialogContent>
-                  </Dialog>
-
-                  {/* Add Custom Output Dialog */}
-                  <Dialog open={isAddCustomOutputOpen} onOpenChange={setIsAddCustomOutputOpen}>
-                    <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-                      <DialogHeader>
-                        <DialogTitle>Add Custom Output Field</DialogTitle>
-                        <DialogDescription>
-                          Define a custom field that the AI should return in its response.
-                        </DialogDescription>
-                      </DialogHeader>
-                      <div className="space-y-4 py-4">
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="space-y-2">
-                            <Label htmlFor="custom_name">Field Name (JSON key) *</Label>
-                            <Input
-                              id="custom_name"
-                              value={newCustomOutput.name || ""}
-                              onChange={(e) =>
-                                setNewCustomOutput({ ...newCustomOutput, name: e.target.value })
-                              }
-                              placeholder="e.g., industry_fit"
-                              required
-                            />
-                            <p className="text-xs text-muted-foreground">Used as the JSON key in AI response</p>
-                          </div>
-                          <div className="space-y-2">
-                            <Label htmlFor="custom_label">Display Label *</Label>
-                            <Input
-                              id="custom_label"
-                              value={newCustomOutput.label || ""}
-                              onChange={(e) =>
-                                setNewCustomOutput({ ...newCustomOutput, label: e.target.value })
-                              }
-                              placeholder="e.g., Industry Fit"
-                              required
-                            />
-                            <p className="text-xs text-muted-foreground">Shown in the table</p>
-                          </div>
-                        </div>
-
-                        <div className="space-y-2">
-                          <Label htmlFor="custom_description">Description *</Label>
-                          <Textarea
-                            id="custom_description"
-                            value={newCustomOutput.description || ""}
-                            onChange={(e) =>
-                              setNewCustomOutput({ ...newCustomOutput, description: e.target.value })
-                            }
-                            placeholder="Describe what the AI should return for this field..."
-                            rows={3}
-                            required
-                          />
-                        </div>
-
-                        <div className="space-y-2">
-                          <Label htmlFor="custom_type">Field Type *</Label>
-                          <Select
-                            value={newCustomOutput.type || "text"}
-                            onValueChange={(value: CustomOutputType) =>
-                              setNewCustomOutput({ ...newCustomOutput, type: value })
-                            }
-                          >
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="text">Text</SelectItem>
-                              <SelectItem value="number">Number</SelectItem>
-                              <SelectItem value="boolean">Boolean (True/False/Unknown)</SelectItem>
-                              <SelectItem value="list">List (Select from options)</SelectItem>
-                              <SelectItem value="nested_json">Nested JSON</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-
-                        {/* List type options */}
-                        {newCustomOutput.type === "list" && (
-                          <div className="space-y-4 border-t pt-4">
-                            <div className="space-y-2">
-                              <Label>List Options</Label>
-                              <div className="flex gap-2">
-                                <Input
-                                  value={newListOption}
-                                  onChange={(e) => setNewListOption(e.target.value)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter") {
-                                      e.preventDefault();
-                                      addListOption();
-                                    }
-                                  }}
-                                  placeholder="Add option..."
-                                />
-                                <Button type="button" variant="outline" onClick={addListOption}>
-                                  <Plus className="h-4 w-4" />
-                                </Button>
-                              </div>
-                              <div className="flex flex-wrap gap-2 mt-2">
-                                {newCustomOutput.list_options?.map((opt) => (
-                                  <Badge key={opt} variant="secondary" className="flex items-center gap-1">
-                                    {opt}
-                                    <button
-                                      type="button"
-                                      onClick={() => removeListOption(opt)}
-                                      className="ml-1 hover:text-destructive"
-                                    >
-                                      <X className="h-3 w-3" />
-                                    </button>
-                                  </Badge>
-                                ))}
-                              </div>
-                            </div>
-                            <div className="space-y-2">
-                              <Label htmlFor="list_description">How to Pick from List</Label>
-                              <Input
-                                id="list_description"
-                                value={newCustomOutput.list_description || ""}
-                                onChange={(e) =>
-                                  setNewCustomOutput({ ...newCustomOutput, list_description: e.target.value })
-                                }
-                                placeholder="e.g., Select the most appropriate option based on..."
-                              />
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Boolean type options */}
-                        {newCustomOutput.type === "boolean" && (
-                          <div className="space-y-2 border-t pt-4">
-                            <Label>Boolean Options</Label>
-                            <div className="flex gap-2">
-                              {(['true', 'false', 'unknown'] as const).map((opt) => (
-                                <div key={opt} className="flex items-center space-x-2">
-                                  <input
-                                    type="checkbox"
-                                    checked={newCustomOutput.boolean_options?.includes(opt) || false}
-                                    onChange={(e) => {
-                                      const current = newCustomOutput.boolean_options || [];
-                                      const updated = e.target.checked
-                                        ? [...current, opt]
-                                        : current.filter(o => o !== opt);
-                                      setNewCustomOutput({ ...newCustomOutput, boolean_options: updated });
-                                    }}
-                                    className="rounded"
-                                  />
-                                  <Label className="font-normal capitalize">{opt}</Label>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Nested JSON type options */}
-                        {newCustomOutput.type === "nested_json" && (
-                          <div className="space-y-4 border-t pt-4">
-                            <div className="space-y-2">
-                              <Label htmlFor="json_max_pairs">Max Key-Value Pairs</Label>
-                              <Input
-                                id="json_max_pairs"
-                                type="number"
-                                min="1"
-                                max="50"
-                                value={newCustomOutput.nested_json_max_pairs || 10}
-                                onChange={(e) =>
-                                  setNewCustomOutput({
-                                    ...newCustomOutput,
-                                    nested_json_max_pairs: parseInt(e.target.value) || 10,
-                                  })
-                                }
-                              />
-                            </div>
-                            <div className="space-y-2">
-                              <Label htmlFor="json_description">JSON Structure Description</Label>
-                              <Textarea
-                                id="json_description"
-                                value={newCustomOutput.nested_json_description || ""}
-                                onChange={(e) =>
-                                  setNewCustomOutput({ ...newCustomOutput, nested_json_description: e.target.value })
-                                }
-                                placeholder="e.g., Key-value pairs where keys are tags and values are relevance scores..."
-                                rows={3}
-                              />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                      <DialogFooter>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => {
-                            setIsAddCustomOutputOpen(false);
-                            setNewCustomOutput({
-                              name: "",
-                              label: "",
-                              description: "",
-                              type: "text",
-                              list_options: [],
-                              boolean_options: ['true', 'false', 'unknown'],
-                              nested_json_max_pairs: 10,
-                            });
-                          }}
-                        >
-                          Cancel
-                        </Button>
-                        <Button type="button" onClick={handleAddCustomOutput}>
-                          Add Field
-                        </Button>
-                      </DialogFooter>
-                    </DialogContent>
-                  </Dialog>
+                      </DialogContent>
+                    </Dialog>
                   </div>
                 </div>
               </CardHeader>
@@ -2230,8 +2249,8 @@ Output ONLY the JSON configuration with the \`ai_opener_prompt\` field.`;
                                 {config.enable_score && config.enable_classification
                                   ? "Score + Classification"
                                   : config.enable_score
-                                  ? "Score Only"
-                                  : "Classification Only"}
+                                    ? "Score Only"
+                                    : "Classification Only"}
                               </CardDescription>
                             </div>
                             <div className="flex items-center gap-2">

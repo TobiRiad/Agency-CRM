@@ -167,6 +167,26 @@ export default function BatchDetailPage() {
   const [duplicateCompany, setDuplicateCompany] = useState<Company | null>(null);
   const [showDuplicateWarning, setShowDuplicateWarning] = useState(false);
 
+  // Real-time duplicate check state
+  const [duplicateStatus, setDuplicateStatus] = useState<{
+    checking: boolean;
+    exists: boolean;
+    matchType: 'name' | 'website' | null;
+    companyName?: string;
+  }>({ checking: false, exists: false, matchType: null });
+
+  // Hunter.io state
+  const [hunterPeople, setHunterPeople] = useState<Array<{
+    email: string;
+    first_name: string;
+    last_name: string;
+    position: string;
+    confidence: number;
+  }>>([]);
+  const [selectedHunterPeople, setSelectedHunterPeople] = useState<Set<string>>(new Set());
+  const [isSearchingHunter, setIsSearchingHunter] = useState(false);
+  const [hunterSearched, setHunterSearched] = useState(false);
+
   // State for inline contact editing
   const [editingContactId, setEditingContactId] = useState<string | null>(null);
   const [editingContactData, setEditingContactData] = useState({
@@ -215,7 +235,7 @@ export default function BatchDetailPage() {
           getCompanies(pb, campaignId),
           getAIScoringConfigs(pb, campaignId),
         ]);
-        
+
         setCompanies(companiesData);
         setAllCompanies(allCompaniesData);
         setAiConfigs(configs);
@@ -287,6 +307,120 @@ export default function BatchDetailPage() {
     loadData();
   }, [loadData]);
 
+  // Debounced real-time duplicate check
+  useEffect(() => {
+    if (!newCompany.name.trim() && !newCompany.website.trim()) {
+      setDuplicateStatus({ checking: false, exists: false, matchType: null });
+      return;
+    }
+
+    if (!isAddCompanyOpen || showDuplicateWarning || showUrlPreview) {
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(async () => {
+      setDuplicateStatus(prev => ({ ...prev, checking: true }));
+      try {
+        const response = await fetch('/api/companies/check-duplicate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: newCompany.name.trim(),
+            website: newCompany.website.trim(),
+            campaignId,
+          }),
+          signal: controller.signal,
+        });
+        const data = await response.json();
+        if (data.success) {
+          setDuplicateStatus({
+            checking: false,
+            exists: data.exists,
+            matchType: data.matchType,
+            companyName: data.companyName,
+          });
+        }
+      } catch (error) {
+        if ((error as Error).name !== 'AbortError') {
+          setDuplicateStatus({ checking: false, exists: false, matchType: null });
+        }
+      }
+    }, 400);
+
+    return () => {
+      clearTimeout(timeoutId);
+      controller.abort();
+    };
+  }, [newCompany.name, newCompany.website, campaignId, isAddCompanyOpen, showDuplicateWarning, showUrlPreview]);
+
+  // Hunter.io search function
+  const handleHunterSearch = async () => {
+    if (!newCompany.website.trim()) return;
+
+    setIsSearchingHunter(true);
+    setHunterPeople([]);
+    setSelectedHunterPeople(new Set());
+
+    try {
+      const response = await fetch('/api/hunter/domain-search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ domain: newCompany.website }),
+      });
+      const data = await response.json();
+
+      if (data.success && data.people?.length > 0) {
+        setHunterPeople(data.people);
+        toast({
+          title: "People Found",
+          description: `Found ${data.people.length} people at ${data.domain}`,
+        });
+      } else if (data.success) {
+        toast({
+          title: "No People Found",
+          description: "Hunter.io didn't find any email addresses for this domain.",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Search Failed",
+          description: data.error || "Failed to search Hunter.io",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error("Hunter search error:", error);
+      toast({
+        title: "Error",
+        description: "Failed to search Hunter.io",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSearchingHunter(false);
+      setHunterSearched(true);
+    }
+  };
+
+  // Add selected Hunter people to the newCompanyPeople list
+  const handleAddHunterPeople = () => {
+    const selected = hunterPeople.filter(p => selectedHunterPeople.has(p.email));
+    const newPeople = selected.map(p => ({
+      id: crypto.randomUUID(),
+      email: p.email,
+      first_name: p.first_name,
+      last_name: p.last_name,
+      title: p.position,
+    }));
+    setNewCompanyPeople([...newCompanyPeople, ...newPeople]);
+    setHunterPeople([]);
+    setSelectedHunterPeople(new Set());
+    toast({
+      title: "People Added",
+      description: `Added ${newPeople.length} people to the company`,
+    });
+  };
+
   // Outreach: Add contact handler
   const handleAddContact = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -295,9 +429,9 @@ export default function BatchDetailPage() {
     setIsCreating(true);
     try {
       const pb = getClientPB();
-      
+
       let companyId = newContact.company;
-      
+
       // If creating a new company inline, create it first
       if (isCreatingNewCompany && inlineNewCompany.name.trim()) {
         const currentUser = getCurrentUser(pb);
@@ -310,7 +444,7 @@ export default function BatchDetailPage() {
         });
         companyId = newCompanyData.id;
       }
-      
+
       const currentUser = getCurrentUser(pb);
       await createContact(pb, {
         email: newContact.email,
@@ -325,7 +459,7 @@ export default function BatchDetailPage() {
 
       toast({
         title: "Contact added",
-        description: isCreatingNewCompany && inlineNewCompany.name.trim() 
+        description: isCreatingNewCompany && inlineNewCompany.name.trim()
           ? "Contact and company have been added to this batch."
           : "The contact has been added to this batch.",
         variant: "success",
@@ -409,13 +543,13 @@ export default function BatchDetailPage() {
   // Check for duplicate companies by website or name
   const checkForDuplicates = async (): Promise<Company | null> => {
     const pb = getClientPB();
-    
+
     // Check by website domain if provided
     if (newCompany.website) {
       const domain = extractDomain(newCompany.website);
       // Search all companies in the campaign
       const companiesList = await getCompanies(pb, campaignId);
-      
+
       for (const company of companiesList) {
         if (company.website) {
           const existingDomain = extractDomain(company.website);
@@ -425,17 +559,17 @@ export default function BatchDetailPage() {
         }
       }
     }
-    
+
     // Also check by similar name (case-insensitive exact match)
     const nameLower = newCompany.name.trim().toLowerCase();
     const companiesList = await getCompanies(pb, campaignId);
-    
+
     for (const company of companiesList) {
       if (company.name.toLowerCase() === nameLower) {
         return company;
       }
     }
-    
+
     return null;
   };
 
@@ -468,13 +602,13 @@ export default function BatchDetailPage() {
   const handleProceedWithDuplicate = async () => {
     setShowDuplicateWarning(false);
     setDuplicateCompany(null);
-    
+
     // If Firecrawl is enabled, has a website, and we haven't mapped yet, map first
     if (campaign?.enable_firecrawl && newCompany.website && !showUrlPreview) {
       await handleMapUrls();
       return;
     }
-    
+
     await handleSaveCompany();
   };
 
@@ -752,20 +886,20 @@ export default function BatchDetailPage() {
   const handleCopyCompanyData = (company: Company) => {
     // Build a formatted string with all company data (excluding people)
     const lines: string[] = [];
-    
+
     lines.push(`Company: ${company.name}`);
     if (company.website) lines.push(`Website: ${company.website}`);
     if (company.email) lines.push(`Email: ${company.email}`);
     if (company.industry) lines.push(`Industry: ${company.industry}`);
     if (company.description) lines.push(`Description: ${company.description}`);
-    
+
     // AI Scoring data
     if (company.ai_score !== undefined) {
       lines.push("");
       lines.push("--- AI Analysis ---");
       lines.push(`Score: ${company.ai_score}${company.ai_confidence ? ` (${Math.round(company.ai_confidence * 100)}% confidence)` : ""}`);
       if (company.ai_classification) lines.push(`Classification: ${company.ai_classification}`);
-      
+
       // Add custom outputs from ai_data
       if (company.ai_data && aiConfigs.length > 0 && aiConfigs[0].custom_outputs) {
         for (const output of aiConfigs[0].custom_outputs) {
@@ -779,7 +913,7 @@ export default function BatchDetailPage() {
           }
         }
       }
-      
+
       // Add reasons if available
       if (company.ai_reasons && company.ai_reasons.length > 0) {
         lines.push("");
@@ -789,7 +923,7 @@ export default function BatchDetailPage() {
         });
       }
     }
-    
+
     navigator.clipboard.writeText(lines.join("\n"));
     toast({
       title: "Copied!",
@@ -834,14 +968,30 @@ export default function BatchDetailPage() {
     try {
       const pb = getClientPB();
       const createdContacts = await pushCompanyToOutreach(
-        pb, 
-        companyId, 
+        pb,
+        companyId,
         selectedOutreachCampaign,
         selectedFunnelStage || undefined,
         selectedOutreachBatch || undefined
       );
 
       if (createdContacts.length > 0) {
+        // Update local companies state to reflect the push
+        setCompanies(prevCompanies =>
+          prevCompanies.map(company => {
+            if (company.id === companyId) {
+              const existingPushed = company.pushed_to_campaigns || [];
+              if (!existingPushed.includes(selectedOutreachCampaign)) {
+                return {
+                  ...company,
+                  pushed_to_campaigns: [...existingPushed, selectedOutreachCampaign],
+                };
+              }
+            }
+            return company;
+          })
+        );
+
         toast({
           title: "Pushed to Outreach",
           description: `Created ${createdContacts.length} contact(s) in outreach campaign.`,
@@ -852,8 +1002,8 @@ export default function BatchDetailPage() {
         setSelectedOutreachBatch("");
       } else {
         toast({
-          title: "No Contacts",
-          description: "No people found in this company to push.",
+          title: "No Contacts Created",
+          description: "All contacts already exist in the outreach campaign or company has no email/people.",
           variant: "destructive",
         });
       }
@@ -874,7 +1024,7 @@ export default function BatchDetailPage() {
     setSelectedOutreachCampaign(campaignId);
     setSelectedFunnelStage("");
     setSelectedOutreachBatch("");
-    
+
     if (campaignId) {
       try {
         const pb = getClientPB();
@@ -1063,7 +1213,7 @@ export default function BatchDetailPage() {
                     )}
                   </DialogDescription>
                 </DialogHeader>
-                
+
                 {/* Duplicate Warning */}
                 {showDuplicateWarning && duplicateCompany && (
                   <div className="my-4 p-4 border border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800 rounded-lg">
@@ -1118,14 +1268,28 @@ export default function BatchDetailPage() {
                   <div className="space-y-4 py-4">
                     <div className="space-y-2">
                       <Label htmlFor="company_name">Company Name *</Label>
-                      <Input
-                        id="company_name"
-                        value={newCompany.name}
-                        onChange={(e) =>
-                          setNewCompany({ ...newCompany, name: e.target.value })
-                        }
-                        required
-                      />
+                      <div className="relative">
+                        <Input
+                          id="company_name"
+                          value={newCompany.name}
+                          onChange={(e) => {
+                            setNewCompany({ ...newCompany, name: e.target.value });
+                            setHunterPeople([]);
+                            setHunterSearched(false);
+                          }}
+                          required
+                          className={duplicateStatus.exists && duplicateStatus.matchType === 'name' ? 'border-red-500 focus-visible:ring-red-500' : (newCompany.name.trim() && !duplicateStatus.checking && !duplicateStatus.exists ? 'border-green-500 focus-visible:ring-green-500' : '')}
+                        />
+                        {duplicateStatus.checking && newCompany.name.trim() && (
+                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">Checking...</span>
+                        )}
+                      </div>
+                      {duplicateStatus.exists && duplicateStatus.matchType === 'name' && (
+                        <p className="text-xs text-red-500">Company "{duplicateStatus.companyName}" already exists</p>
+                      )}
+                      {!duplicateStatus.checking && !duplicateStatus.exists && newCompany.name.trim() && (
+                        <p className="text-xs text-green-500 flex items-center gap-1"><Check className="h-3 w-3" /> Available</p>
+                      )}
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
@@ -1135,10 +1299,16 @@ export default function BatchDetailPage() {
                           type="url"
                           placeholder="https://example.com"
                           value={newCompany.website}
-                          onChange={(e) =>
-                            setNewCompany({ ...newCompany, website: e.target.value })
-                          }
+                          onChange={(e) => {
+                            setNewCompany({ ...newCompany, website: e.target.value });
+                            setHunterPeople([]);
+                            setHunterSearched(false);
+                          }}
+                          className={duplicateStatus.exists && duplicateStatus.matchType === 'website' ? 'border-red-500 focus-visible:ring-red-500' : (newCompany.website.trim() && !duplicateStatus.checking && !duplicateStatus.exists ? 'border-green-500 focus-visible:ring-green-500' : '')}
                         />
+                        {duplicateStatus.exists && duplicateStatus.matchType === 'website' && (
+                          <p className="text-xs text-red-500">Website matches "{duplicateStatus.companyName}"</p>
+                        )}
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="email">Company Email</Label>
@@ -1197,6 +1367,70 @@ export default function BatchDetailPage() {
                       )}
                     </div>
 
+                    {/* Hunter.io Section */}
+                    {campaign?.enable_hunter !== false && newCompany.website.trim() && (
+                      <div className="space-y-3 pt-4 border-t">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-base font-medium">Find People (Hunter.io)</Label>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={handleHunterSearch}
+                            disabled={isSearchingHunter || !newCompany.website.trim()}
+                          >
+                            {isSearchingHunter ? (
+                              <><Loader2 className="h-3 w-3 mr-1 animate-spin" />Searching...</>
+                            ) : (
+                              <><Search className="h-3 w-3 mr-1" />Find People</>
+                            )}
+                          </Button>
+                        </div>
+
+                        {hunterPeople.length > 0 && (
+                          <div className="space-y-2">
+                            <div className="max-h-48 overflow-y-auto border rounded-lg divide-y">
+                              {hunterPeople.map((person) => (
+                                <div key={person.email} className="flex items-center gap-3 p-2 hover:bg-muted/50">
+                                  <Checkbox
+                                    checked={selectedHunterPeople.has(person.email)}
+                                    onCheckedChange={(checked) => {
+                                      const newSet = new Set(selectedHunterPeople);
+                                      if (checked) { newSet.add(person.email); } else { newSet.delete(person.email); }
+                                      setSelectedHunterPeople(newSet);
+                                    }}
+                                  />
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-medium truncate">
+                                      {person.first_name} {person.last_name}
+                                      {person.position && <span className="text-muted-foreground"> · {person.position}</span>}
+                                    </p>
+                                    <p className="text-xs text-muted-foreground truncate">{person.email}</p>
+                                  </div>
+                                  <Badge variant="outline" className="text-xs">{person.confidence}%</Badge>
+                                </div>
+                              ))}
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs text-muted-foreground">{selectedHunterPeople.size} selected</span>
+                              <Button
+                                type="button"
+                                size="sm"
+                                onClick={handleAddHunterPeople}
+                                disabled={selectedHunterPeople.size === 0}
+                              >
+                                Add Selected
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+
+                        {hunterSearched && hunterPeople.length === 0 && !isSearchingHunter && (
+                          <p className="text-xs text-muted-foreground">No people found. You can add them manually below.</p>
+                        )}
+                      </div>
+                    )}
+
                     {/* People Section */}
                     <div className="space-y-3 pt-4 border-t">
                       <div className="flex items-center justify-between">
@@ -1209,7 +1443,7 @@ export default function BatchDetailPage() {
                           )}
                         </Label>
                       </div>
-                      
+
                       {/* List of added people */}
                       {newCompanyPeople.length > 0 && (
                         <div className="space-y-2">
@@ -1311,7 +1545,7 @@ export default function BatchDetailPage() {
                         <Globe className="h-4 w-4" />
                         Discovered URLs for {newCompany.name}
                       </h4>
-                      
+
                       {/* Found URLs */}
                       {mapResult?.found && mapResult.found.length > 0 && (
                         <div className="space-y-2 mb-4">
@@ -1327,7 +1561,7 @@ export default function BatchDetailPage() {
                           ))}
                         </div>
                       )}
-                      
+
                       {/* Not Found URLs */}
                       {mapResult?.notFound && mapResult.notFound.length > 0 && (
                         <div className="space-y-3">
@@ -1352,14 +1586,14 @@ export default function BatchDetailPage() {
                         </div>
                       )}
                     </div>
-                    
+
                     <p className="text-xs text-muted-foreground">
                       These URLs will be scraped when running AI scoring to provide richer context.
                       You can proceed without all URLs - AI scoring will use whatever is available.
                     </p>
                   </div>
                 ) : null}
-                
+
                 {!showDuplicateWarning && (
                   <DialogFooter>
                     {showUrlPreview && (
@@ -1437,7 +1671,7 @@ export default function BatchDetailPage() {
                     <Fragment key={company.id}>
                       <TableRow className="bg-slate-50 dark:bg-slate-900/50">
                         <TableCell className="font-medium max-w-[160px]">
-                          <Link 
+                          <Link
                             href={`/campaigns/${campaignId}/companies/${company.id}`}
                             className="flex items-center gap-2 hover:text-primary hover:underline"
                           >
@@ -1447,7 +1681,7 @@ export default function BatchDetailPage() {
                         </TableCell>
                         <TableCell className="max-w-[180px]">
                           {company.description ? (
-                            <p 
+                            <p
                               className="text-sm text-muted-foreground truncate"
                               title={company.description}
                             >
@@ -1509,22 +1743,22 @@ export default function BatchDetailPage() {
                         {aiConfigs.length > 0 && aiConfigs[0].custom_outputs?.map((output) => {
                           // Read from ai_data JSON object instead of separate fields
                           const value = company.ai_data?.[output.name];
-                          const stringValue = value !== undefined && value !== null 
+                          const stringValue = value !== undefined && value !== null
                             ? (typeof value === "object" ? JSON.stringify(value) : String(value))
                             : null;
                           return (
                             <TableCell key={output.id} className="max-w-[140px]">
                               {stringValue !== null ? (
                                 output.type === "boolean" ? (
-                                  <Badge 
+                                  <Badge
                                     variant={value === "true" || value === true ? "default" : value === "false" || value === false ? "secondary" : "outline"}
                                     className="text-xs"
                                   >
                                     {value === true || value === "true" ? "Yes" : value === false || value === "false" ? "No" : stringValue}
                                   </Badge>
                                 ) : output.type === "nested_json" ? (
-                                  <div 
-                                    className="text-xs bg-muted px-2 py-1 rounded truncate cursor-help" 
+                                  <div
+                                    className="text-xs bg-muted px-2 py-1 rounded truncate cursor-help"
                                     title={JSON.stringify(value, null, 2)}
                                   >
                                     {Array.isArray(value) ? value.join(", ") : stringValue}
@@ -1536,8 +1770,8 @@ export default function BatchDetailPage() {
                                 ) : output.type === "number" ? (
                                   <span className="text-sm font-medium">{stringValue}</span>
                                 ) : (
-                                  <span 
-                                    className="text-sm truncate block max-w-[120px]" 
+                                  <span
+                                    className="text-sm truncate block max-w-[120px]"
                                     title={stringValue}
                                   >
                                     {stringValue}
@@ -1592,18 +1826,33 @@ export default function BatchDetailPage() {
                               </Button>
                             )}
                             <Button
-                              variant="outline"
+                              variant={company.pushed_to_campaigns?.length ? "secondary" : "outline"}
                               size="sm"
-                              className="h-7 px-2 text-xs"
+                              className={`h-7 px-2 text-xs ${company.pushed_to_campaigns?.length ? "border-green-500/50" : ""}`}
                               onClick={() => {
                                 setPushingCompanyId(company.id);
                                 setIsPushDialogOpen(true);
                               }}
                               disabled={!canPush || pushingCompanyId === company.id}
-                              title="Push to outreach campaign"
+                              title={
+                                company.pushed_to_campaigns?.length
+                                  ? `Already pushed to: ${company.pushed_to_campaigns
+                                    .map(id => outreachCampaigns.find(c => c.id === id)?.name || id)
+                                    .join(", ")}`
+                                  : "Push to outreach campaign"
+                              }
                             >
-                              <ArrowRight className="h-3 w-3 mr-1" />
-                              Push
+                              {company.pushed_to_campaigns?.length ? (
+                                <>
+                                  <Check className="h-3 w-3 mr-1 text-green-500" />
+                                  Pushed ({company.pushed_to_campaigns.length})
+                                </>
+                              ) : (
+                                <>
+                                  <ArrowRight className="h-3 w-3 mr-1" />
+                                  Push
+                                </>
+                              )}
                             </Button>
                             <Button
                               variant="ghost"
@@ -1833,14 +2082,33 @@ export default function BatchDetailPage() {
                     <SelectValue placeholder="Select outreach campaign" />
                   </SelectTrigger>
                   <SelectContent>
-                    {outreachCampaigns.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>
-                        {c.name}
-                      </SelectItem>
-                    ))}
+                    {outreachCampaigns.filter(c => c.id).map((c) => {
+                      const isPushed = pushingCompanyId &&
+                        companies.find(comp => comp.id === pushingCompanyId)?.pushed_to_campaigns?.includes(c.id);
+                      return (
+                        <SelectItem key={c.id} value={c.id}>
+                          <span className="flex items-center gap-2">
+                            {c.name}
+                            {isPushed && <Check className="h-3 w-3 text-green-500" />}
+                          </span>
+                        </SelectItem>
+                      );
+                    })}
                   </SelectContent>
                 </Select>
               </div>
+
+              {/* Warning if already pushed to this campaign */}
+              {selectedOutreachCampaign && pushingCompanyId &&
+                companies.find(c => c.id === pushingCompanyId)?.pushed_to_campaigns?.includes(selectedOutreachCampaign) && (
+                  <div className="flex items-center gap-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400">
+                    <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+                    <p className="text-sm">
+                      This company was already pushed to this campaign. Pushing again will only create contacts that don&apos;t exist yet.
+                    </p>
+                  </div>
+                )}
+
               {selectedOutreachCampaign && outreachCampaignFunnelStages.length > 0 && (
                 <div className="space-y-2">
                   <Label>Initial Stage (optional)</Label>
@@ -1882,7 +2150,7 @@ export default function BatchDetailPage() {
               <Button type="button" variant="outline" onClick={() => setIsPushDialogOpen(false)}>
                 Cancel
               </Button>
-              <Button 
+              <Button
                 onClick={() => pushingCompanyId && handlePushToOutreach(pushingCompanyId)}
                 disabled={!selectedOutreachCampaign || pushingCompanyId === null}
               >
@@ -2210,7 +2478,7 @@ export default function BatchDetailPage() {
                     />
                   </TableCell>
                   <TableCell className="font-medium">
-                    <Link 
+                    <Link
                       href={`/campaigns/${campaignId}/contacts/${contact.id}`}
                       className="hover:underline"
                     >
