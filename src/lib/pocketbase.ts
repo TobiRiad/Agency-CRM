@@ -479,14 +479,24 @@ export async function getContactFieldValues(pb: PocketBase, contactId: string): 
 
 export async function getFieldValuesForContacts(pb: PocketBase, contactIds: string[]): Promise<ContactFieldValue[]> {
   if (contactIds.length === 0) return [];
-  // Build filter for multiple contacts
-  const filter = contactIds.map((id, i) => `contact = {:id${i}}`).join(' || ');
-  const params = contactIds.reduce((acc, id, i) => ({ ...acc, [`id${i}`]: id }), {});
-  const result = await pb.collection('contact_field_values').getList<ContactFieldValue>(1, 1000, {
-    filter: pb.filter(filter, params),
-    expand: 'custom_field',
-  });
-  return result.items;
+
+  // Batch contacts to avoid URL length limits (max ~30 IDs per request)
+  const BATCH_SIZE = 30;
+  const allResults: ContactFieldValue[] = [];
+
+  for (let i = 0; i < contactIds.length; i += BATCH_SIZE) {
+    const batchIds = contactIds.slice(i, i + BATCH_SIZE);
+    const filter = batchIds.map((id, idx) => `contact = {:id${idx}}`).join(' || ');
+    const params = batchIds.reduce((acc, id, idx) => ({ ...acc, [`id${idx}`]: id }), {});
+
+    const result = await pb.collection('contact_field_values').getList<ContactFieldValue>(1, 1000, {
+      filter: pb.filter(filter, params),
+      expand: 'custom_field',
+    });
+    allResults.push(...result.items);
+  }
+
+  return allResults;
 }
 
 export async function setContactFieldValue(pb: PocketBase, data: {
