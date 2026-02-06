@@ -115,6 +115,10 @@ export default function BatchDetailPage() {
   const [aiConfigs, setAiConfigs] = useState<AIScoringConfig[]>([]);
   const [scoringCompanyId, setScoringCompanyId] = useState<string | null>(null);
 
+  // Bulk AI scoring state
+  const [isBulkScoring, setIsBulkScoring] = useState(false);
+  const [bulkScoringProgress, setBulkScoringProgress] = useState({ current: 0, total: 0 });
+
   const [newContact, setNewContact] = useState({
     email: "",
     first_name: "",
@@ -886,6 +890,72 @@ export default function BatchDetailPage() {
     }
   };
 
+  // Bulk score all companies in the batch
+  const handleBulkScoreAll = async () => {
+    if (aiConfigs.length === 0) {
+      toast({
+        title: "No AI Config",
+        description: "Please set up an AI scoring config in campaign settings first.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const companiesToScore = companies;
+    if (companiesToScore.length === 0) {
+      toast({
+        title: "No Companies",
+        description: "No companies to score in this batch.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsBulkScoring(true);
+    setBulkScoringProgress({ current: 0, total: companiesToScore.length });
+
+    const config = aiConfigs[0];
+    let successCount = 0;
+    let failCount = 0;
+
+    for (let i = 0; i < companiesToScore.length; i++) {
+      const company = companiesToScore[i];
+      setBulkScoringProgress({ current: i + 1, total: companiesToScore.length });
+
+      try {
+        const response = await fetch("/api/ai/score-lead", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            companyId: company.id,
+            configId: config.id,
+          }),
+        });
+
+        const result = await response.json();
+        if (result.success) {
+          successCount++;
+        } else {
+          failCount++;
+        }
+      } catch (error) {
+        console.error(`Failed to score company ${company.name}:`, error);
+        failCount++;
+      }
+    }
+
+    setIsBulkScoring(false);
+    setBulkScoringProgress({ current: 0, total: 0 });
+
+    toast({
+      title: "Bulk Scoring Complete",
+      description: `Scored ${successCount} companies successfully${failCount > 0 ? `, ${failCount} failed` : ""}.`,
+      variant: successCount > 0 ? "default" : "destructive",
+    });
+
+    loadData();
+  };
+
   const handleCopyCompanyData = (company: Company) => {
     // Build a formatted string with all company data (excluding people)
     const lines: string[] = [];
@@ -1217,6 +1287,27 @@ export default function BatchDetailPage() {
               />
             </div>
           </div>
+
+          {/* Run AI Button */}
+          {aiConfigs.length > 0 && (
+            <Button
+              variant={isBulkScoring ? "secondary" : "outline"}
+              onClick={handleBulkScoreAll}
+              disabled={isBulkScoring || companies.length === 0}
+            >
+              {isBulkScoring ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Scoring {bulkScoringProgress.current}/{bulkScoringProgress.total}
+                </>
+              ) : (
+                <>
+                  <Sparkles className="mr-2 h-4 w-4" />
+                  Run AI ({companies.length})
+                </>
+              )}
+            </Button>
+          )}
 
           <Dialog open={isAddCompanyOpen} onOpenChange={handleCompanyDialogClose}>
             <DialogTrigger asChild>
