@@ -974,8 +974,8 @@ export default function BatchDetailPage() {
         pb,
         companyId,
         selectedOutreachCampaign,
-        selectedFunnelStage || undefined,
-        selectedOutreachBatch || undefined
+        selectedFunnelStage && selectedFunnelStage !== "__none__" ? selectedFunnelStage : undefined,
+        selectedOutreachBatch && selectedOutreachBatch !== "__none__" ? selectedOutreachBatch : undefined
       );
 
       if (createdContacts.length > 0) {
@@ -2151,7 +2151,7 @@ export default function BatchDetailPage() {
                       <SelectValue placeholder="Select initial stage" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">Default (first stage)</SelectItem>
+                      <SelectItem value="__none__">Default (first stage)</SelectItem>
                       {outreachCampaignFunnelStages.map((stage) => (
                         <SelectItem key={stage.id} value={stage.id}>
                           {stage.name}
@@ -2169,7 +2169,7 @@ export default function BatchDetailPage() {
                       <SelectValue placeholder="Select batch" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">No batch</SelectItem>
+                      <SelectItem value="__none__">No batch</SelectItem>
                       {outreachCampaignBatches.map((b) => (
                         <SelectItem key={b.id} value={b.id}>
                           {b.name}
