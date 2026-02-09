@@ -144,6 +144,10 @@ export interface Contact extends BaseRecord {
   source_company?: string; // Lead company this came from
   source_contact?: string; // Lead contact this came from
   ai_opener?: string; // AI-generated opener (for outreach campaigns)
+  // Follow-up scheduling
+  follow_up_date?: string; // ISO date string - when to send the next follow-up
+  follow_up_template?: string; // Relation ID to email_templates
+  follow_up_cancelled?: boolean; // Set to true when contact replies (stops all follow-ups)
   // Expanded relations
   expand?: {
     company?: Company;
@@ -153,6 +157,7 @@ export interface Contact extends BaseRecord {
     source_company?: Company;
     source_contact?: Contact;
     contact_field_values_via_contact?: ContactFieldValue[];
+    follow_up_template?: EmailTemplate;
   };
 }
 
@@ -202,7 +207,7 @@ export interface EmailTemplate extends BaseRecord {
   };
 }
 
-export type EmailStatus = 'pending' | 'sent' | 'delivered' | 'opened' | 'clicked' | 'bounced' | 'failed';
+export type EmailStatus = 'pending' | 'sent' | 'delivered' | 'opened' | 'clicked' | 'bounced' | 'failed' | 'replied';
 
 export interface EmailSend extends BaseRecord {
   contact: string;
@@ -216,6 +221,11 @@ export interface EmailSend extends BaseRecord {
   clicked_at?: string;
   bounced_at?: string;
   error_message?: string;
+  // Threading fields
+  message_id?: string; // Email Message-ID header for threading
+  thread_id?: string; // Gmail thread ID or internal thread grouping
+  in_reply_to?: string; // In-Reply-To header for threading
+  is_follow_up?: boolean; // Whether this send is a follow-up to a previous email
   // Expanded relations
   expand?: {
     contact?: Contact;
@@ -381,6 +391,29 @@ export interface CompanyFormData {
   name: string;
   website: string;
   industry: string;
+}
+
+// Inbox / Inbound email processing types
+export type InboxClassification = 'out_of_office' | 'reply' | 'bounce' | 'unrelated';
+
+export interface InboxMessage extends BaseRecord {
+  from_email: string;
+  subject?: string;
+  body_text?: string;
+  gmail_message_id?: string;
+  gmail_thread_id?: string;
+  contact?: string; // Relation to contacts
+  campaign?: string; // Relation to campaigns
+  classification?: InboxClassification;
+  ai_summary?: string;
+  action_taken?: string;
+  processed_at?: string;
+  received_at?: string;
+  // Expanded relations
+  expand?: {
+    contact?: Contact;
+    campaign?: Campaign;
+  };
 }
 
 export interface EmailTemplateFormData {

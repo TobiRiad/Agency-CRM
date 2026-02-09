@@ -12,6 +12,10 @@ import {
   getContactStages,
   setContactStage,
   getEmailSendsForContact,
+  getEmailTemplateGroups,
+  getEmailTemplates,
+  setContactFollowUp,
+  cancelContactFollowUp,
 } from "@/lib/pocketbase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -52,8 +56,11 @@ import {
   XCircle,
   Eye,
   Save,
+  CalendarClock,
+  Ban,
+  Reply,
 } from "lucide-react";
-import type { Contact, Company, FunnelStage, ContactStage, EmailSend } from "@/types";
+import type { Contact, Company, FunnelStage, ContactStage, EmailSend, EmailTemplate, EmailTemplateGroup } from "@/types";
 import { formatDateTime } from "@/lib/utils";
 
 export default function ContactDetailPage() {
@@ -67,8 +74,15 @@ export default function ContactDetailPage() {
   const [funnelStages, setFunnelStages] = useState<FunnelStage[]>([]);
   const [currentStageId, setCurrentStageId] = useState<string | null>(null);
   const [emailSends, setEmailSends] = useState<EmailSend[]>([]);
+  const [emailTemplates, setEmailTemplates] = useState<EmailTemplate[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isSavingFollowUp, setIsSavingFollowUp] = useState(false);
+
+  // Follow-up state
+  const [followUpDate, setFollowUpDate] = useState("");
+  const [followUpTemplateId, setFollowUpTemplateId] = useState("");
+  const [followUpCancelled, setFollowUpCancelled] = useState(false);
 
   const [editedContact, setEditedContact] = useState({
     first_name: "",
@@ -81,13 +95,21 @@ export default function ContactDetailPage() {
   const loadData = useCallback(async () => {
     try {
       const pb = getClientPB();
-      const [contactData, companiesData, stagesData, contactStagesData, emailSendsData] = await Promise.all([
+      const [contactData, companiesData, stagesData, contactStagesData, emailSendsData, templateGroups] = await Promise.all([
         getContact(pb, contactId),
         getCompanies(pb, campaignId),
         getFunnelStages(pb, campaignId),
         getContactStages(pb, campaignId),
         getEmailSendsForContact(pb, contactId),
+        getEmailTemplateGroups(pb, campaignId),
       ]);
+
+      // Load all templates across all groups
+      const allTemplates: EmailTemplate[] = [];
+      for (const group of templateGroups) {
+        const templates = await getEmailTemplates(pb, group.id);
+        allTemplates.push(...templates);
+      }
 
       setContact(contactData);
       setCompanies(companiesData);
@@ -95,10 +117,16 @@ export default function ContactDetailPage() {
       setEmailSends(emailSendsData.sort((a, b) => 
         new Date(b.sent_at).getTime() - new Date(a.sent_at).getTime()
       ));
+      setEmailTemplates(allTemplates);
 
       // Find current stage for this contact
       const contactStage = contactStagesData.find((cs: ContactStage) => cs.contact === contactId);
       setCurrentStageId(contactStage?.stage || null);
+
+      // Set follow-up state
+      setFollowUpDate(contactData.follow_up_date ? contactData.follow_up_date.split("T")[0] : "");
+      setFollowUpTemplateId(contactData.follow_up_template || "");
+      setFollowUpCancelled(contactData.follow_up_cancelled || false);
 
       // Set editable fields
       setEditedContact({
@@ -177,12 +205,69 @@ export default function ContactDetailPage() {
     }
   };
 
+  const handleSaveFollowUp = async () => {
+    setIsSavingFollowUp(true);
+    try {
+      const pb = getClientPB();
+      await setContactFollowUp(pb, contactId, {
+        follow_up_date: followUpDate ? new Date(followUpDate).toISOString() : "",
+        follow_up_template: followUpTemplateId || "",
+        follow_up_cancelled: false,
+      });
+
+      setFollowUpCancelled(false);
+      toast({
+        title: "Follow-up saved",
+        description: followUpDate
+          ? `Follow-up scheduled for ${new Date(followUpDate).toLocaleDateString()}`
+          : "Follow-up date cleared",
+      });
+      loadData();
+    } catch (error) {
+      console.error("Failed to save follow-up:", error);
+      toast({
+        title: "Error",
+        description: "Failed to save follow-up settings.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSavingFollowUp(false);
+    }
+  };
+
+  const handleCancelFollowUp = async () => {
+    setIsSavingFollowUp(true);
+    try {
+      const pb = getClientPB();
+      await cancelContactFollowUp(pb, contactId);
+      setFollowUpDate("");
+      setFollowUpTemplateId("");
+      setFollowUpCancelled(true);
+      toast({
+        title: "Follow-ups cancelled",
+        description: "No more follow-up emails will be sent to this contact.",
+      });
+      loadData();
+    } catch (error) {
+      console.error("Failed to cancel follow-up:", error);
+      toast({
+        title: "Error",
+        description: "Failed to cancel follow-ups.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSavingFollowUp(false);
+    }
+  };
+
   const getStatusIcon = (status: string) => {
     switch (status) {
       case "delivered":
         return <CheckCircle className="h-4 w-4 text-green-500" />;
       case "opened":
         return <Eye className="h-4 w-4 text-blue-500" />;
+      case "replied":
+        return <Reply className="h-4 w-4 text-emerald-600" />;
       case "bounced":
         return <XCircle className="h-4 w-4 text-red-500" />;
       case "sent":
@@ -196,6 +281,7 @@ export default function ContactDetailPage() {
     const variants: Record<string, "success" | "secondary" | "destructive" | "default"> = {
       delivered: "success",
       opened: "default",
+      replied: "success",
       bounced: "destructive",
       sent: "secondary",
     };
@@ -392,6 +478,100 @@ export default function ContactDetailPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Follow-up Scheduling */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <CalendarClock className="h-5 w-5" />
+            Follow-up
+          </CardTitle>
+          <CardDescription>
+            Schedule a follow-up email for this contact
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {followUpCancelled ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground bg-muted p-3 rounded-md">
+              <Ban className="h-4 w-4" />
+              <span>Follow-ups are cancelled for this contact (they replied).</span>
+            </div>
+          ) : null}
+
+          <div className="space-y-2">
+            <Label htmlFor="follow_up_date">Follow-up Date</Label>
+            <Input
+              id="follow_up_date"
+              type="date"
+              value={followUpDate}
+              onChange={(e) => setFollowUpDate(e.target.value)}
+              min={new Date().toISOString().split("T")[0]}
+              disabled={followUpCancelled}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="follow_up_template">Email Template</Label>
+            <Select
+              value={followUpTemplateId || "__none__"}
+              onValueChange={(value) =>
+                setFollowUpTemplateId(value === "__none__" ? "" : value)
+              }
+              disabled={followUpCancelled}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select a template" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">No template</SelectItem>
+                {emailTemplates.map((template) => (
+                  <SelectItem key={template.id} value={template.id}>
+                    {template.subject}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              The follow-up will be sent in the same email thread as the last email.
+            </p>
+          </div>
+
+          <div className="flex gap-2">
+            <Button
+              onClick={handleSaveFollowUp}
+              disabled={isSavingFollowUp || followUpCancelled}
+              size="sm"
+            >
+              <CalendarClock className="mr-2 h-4 w-4" />
+              {followUpDate ? "Save Follow-up" : "Clear Follow-up"}
+            </Button>
+            {!followUpCancelled && followUpDate && (
+              <Button
+                onClick={handleCancelFollowUp}
+                disabled={isSavingFollowUp}
+                variant="outline"
+                size="sm"
+              >
+                <Ban className="mr-2 h-4 w-4" />
+                Cancel Follow-ups
+              </Button>
+            )}
+            {followUpCancelled && (
+              <Button
+                onClick={() => {
+                  setFollowUpCancelled(false);
+                  handleSaveFollowUp();
+                }}
+                disabled={isSavingFollowUp}
+                variant="outline"
+                size="sm"
+              >
+                Re-enable Follow-ups
+              </Button>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Email History */}
       <Card>

@@ -78,6 +78,7 @@ import {
   BarChart3,
   Filter,
   Send,
+  Reply,
   GitBranch,
   Sparkles,
   ArrowRight,
@@ -2668,13 +2669,27 @@ export default function CampaignPage() {
 
             <div className="flex items-center gap-2">
               {selectedContacts.size > 0 && (
-                <Button variant="default" asChild>
-                  <Link href={`/campaigns/${campaignId}/send?contacts=${Array.from(selectedContacts).join(",")}`}>
-                    <Send className="mr-2 h-4 w-4" />
-                    Send to {selectedContacts.size} selected
-                  </Link>
-                </Button>
+                <>
+                  <Button variant="default" asChild>
+                    <Link href={`/campaigns/${campaignId}/send?contacts=${Array.from(selectedContacts).join(",")}`}>
+                      <Send className="mr-2 h-4 w-4" />
+                      Send to {selectedContacts.size} selected
+                    </Link>
+                  </Button>
+                  <Button variant="outline" asChild>
+                    <Link href={`/campaigns/${campaignId}/follow-ups?contacts=${Array.from(selectedContacts).join(",")}`}>
+                      <Reply className="mr-2 h-4 w-4" />
+                      Follow-up {selectedContacts.size} selected
+                    </Link>
+                  </Button>
+                </>
               )}
+              <Button variant="outline" asChild>
+                <Link href={`/campaigns/${campaignId}/follow-ups`}>
+                  <Reply className="mr-2 h-4 w-4" />
+                  Follow-ups
+                </Link>
+              </Button>
               <Dialog open={isAddBatchOpen} onOpenChange={setIsAddBatchOpen}>
                 <DialogTrigger asChild>
                   <Button variant="outline">

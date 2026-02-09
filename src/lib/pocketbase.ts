@@ -18,6 +18,7 @@ import type {
   CustomOutputField,
   CampaignKind,
   FirecrawlUrls,
+  InboxMessage,
 } from '@/types';
 
 const POCKETBASE_URL = process.env.NEXT_PUBLIC_POCKETBASE_URL || 'http://localhost:8090';
@@ -732,6 +733,144 @@ export async function updateAIScoringConfig(pb: PocketBase, id: string, data: Pa
 
 export async function deleteAIScoringConfig(pb: PocketBase, id: string): Promise<boolean> {
   return pb.collection('ai_scoring_configs').delete(id);
+}
+
+// Inbox Message functions
+export async function createInboxMessage(pb: PocketBase, data: {
+  from_email: string;
+  subject?: string;
+  body_text?: string;
+  gmail_message_id?: string;
+  gmail_thread_id?: string;
+  contact?: string;
+  campaign?: string;
+  classification?: string;
+  ai_summary?: string;
+  action_taken?: string;
+  processed_at?: string;
+  received_at?: string;
+}): Promise<InboxMessage> {
+  return pb.collection('inbox_messages').create<InboxMessage>(data);
+}
+
+export async function getInboxMessages(pb: PocketBase, campaignId?: string): Promise<InboxMessage[]> {
+  const filter = campaignId
+    ? pb.filter('campaign = {:campaignId}', { campaignId })
+    : '';
+  const result = await pb.collection('inbox_messages').getList<InboxMessage>(1, 200, {
+    filter,
+    sort: '-received_at',
+    expand: 'contact,campaign',
+  });
+  return result.items;
+}
+
+export async function getInboxMessageByGmailId(pb: PocketBase, gmailMessageId: string): Promise<InboxMessage | null> {
+  try {
+    return await pb.collection('inbox_messages').getFirstListItem<InboxMessage>(
+      pb.filter('gmail_message_id = {:gmailMessageId}', { gmailMessageId })
+    );
+  } catch {
+    return null;
+  }
+}
+
+// Contact follow-up helpers
+export async function getContactsDueForFollowUp(pb: PocketBase): Promise<Contact[]> {
+  const now = new Date().toISOString();
+  const result = await pb.collection('contacts').getList<Contact>(1, 200, {
+    filter: pb.filter(
+      'follow_up_date != "" && follow_up_date <= {:now} && follow_up_cancelled != true',
+      { now }
+    ),
+    expand: 'company,campaign,follow_up_template',
+  });
+  return result.items;
+}
+
+export async function setContactFollowUp(pb: PocketBase, contactId: string, data: {
+  follow_up_date?: string;
+  follow_up_template?: string;
+  follow_up_cancelled?: boolean;
+}): Promise<Contact> {
+  return pb.collection('contacts').update<Contact>(contactId, data);
+}
+
+export async function cancelContactFollowUp(pb: PocketBase, contactId: string): Promise<Contact> {
+  return pb.collection('contacts').update<Contact>(contactId, {
+    follow_up_cancelled: true,
+    follow_up_date: '',
+  });
+}
+
+// Find contact by email across all outreach campaigns
+export async function findContactByEmail(pb: PocketBase, email: string): Promise<Contact | null> {
+  try {
+    return await pb.collection('contacts').getFirstListItem<Contact>(
+      pb.filter('email = {:email}', { email }),
+      { expand: 'company,campaign', sort: '-created' }
+    );
+  } catch {
+    return null;
+  }
+}
+
+// Get the most recent email send for a contact (for threading)
+export async function getLatestEmailSendForContact(pb: PocketBase, contactId: string): Promise<EmailSend | null> {
+  try {
+    return await pb.collection('email_sends').getFirstListItem<EmailSend>(
+      pb.filter('contact = {:contactId}', { contactId }),
+      { sort: '-sent_at', expand: 'template' }
+    );
+  } catch {
+    return null;
+  }
+}
+
+// Check if a contact has already been marked as replied
+export async function hasContactReplied(pb: PocketBase, contactId: string): Promise<boolean> {
+  try {
+    const result = await pb.collection('email_sends').getList(1, 1, {
+      filter: pb.filter('contact = {:contactId} && status = "replied"', { contactId }),
+    });
+    return result.items.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+// Mark all email sends for a contact as replied
+export async function markContactEmailsAsReplied(pb: PocketBase, contactId: string): Promise<void> {
+  const result = await pb.collection('email_sends').getList<EmailSend>(1, 100, {
+    filter: pb.filter('contact = {:contactId} && status != "replied" && status != "bounced" && status != "failed"', { contactId }),
+  });
+
+  for (const send of result.items) {
+    await pb.collection('email_sends').update(send.id, { status: 'replied' });
+  }
+}
+
+// Get or set an app setting value
+export async function getAppSetting(pb: PocketBase, key: string): Promise<Record<string, unknown> | null> {
+  try {
+    const setting = await pb.collection('app_settings').getFirstListItem(
+      pb.filter('key = {:key}', { key })
+    );
+    return setting.value as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+export async function setAppSetting(pb: PocketBase, key: string, value: Record<string, unknown>): Promise<void> {
+  try {
+    const existing = await pb.collection('app_settings').getFirstListItem(
+      pb.filter('key = {:key}', { key })
+    );
+    await pb.collection('app_settings').update(existing.id, { value });
+  } catch {
+    await pb.collection('app_settings').create({ key, value });
+  }
 }
 
 // Push company to outreach (creates contacts from lead company)

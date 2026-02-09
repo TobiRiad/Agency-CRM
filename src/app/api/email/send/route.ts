@@ -75,7 +75,21 @@ async function getGmailConfig(userEmail: string): Promise<GmailConfig | null> {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { contactId, templateId, campaignId, to, subject, html, from, replyTo } = body;
+    const {
+      contactId,
+      templateId,
+      campaignId,
+      to,
+      subject,
+      html,
+      from,
+      replyTo,
+      // Threading params (optional — for follow-ups in the same thread)
+      threadId,
+      inReplyTo,
+      references,
+      isFollowUp,
+    } = body;
 
     if (!contactId || !templateId || !campaignId || !to || !subject || !html) {
       return NextResponse.json(
@@ -87,7 +101,7 @@ export async function POST(request: NextRequest) {
     // Get email provider settings
     const { provider, gmailEmail, senderName } = await getEmailProviderSettings();
     
-    let result: { success: boolean; id?: string; error?: string };
+    let result: { success: boolean; id?: string; threadId?: string; error?: string };
 
     if (provider === "gmail" && gmailEmail) {
       // Send via Gmail
@@ -111,6 +125,10 @@ export async function POST(request: NextRequest) {
           // For Gmail/Workspace we don't set Reply-To by default.
           // Replies will naturally go back to the sending mailbox.
           replyTo: replyTo || undefined,
+          // Threading support
+          threadId: threadId || undefined,
+          inReplyTo: inReplyTo || undefined,
+          references: references || undefined,
         },
         gmailConfig
       );
@@ -137,7 +155,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Record the email send in PocketBase
+    // Generate a Message-ID for tracking (Gmail returns its own, but we need one for Resend too)
+    const domain = (gmailEmail || 'crm.local').split('@')[1] || 'crm.local';
+    const generatedMessageId = `<${Date.now()}.${Math.random().toString(36).slice(2)}@${domain}>`;
+
+    // Record the email send in PocketBase (now with threading fields)
     try {
       // Use admin PB because email_sends rules require auth and this is a server route.
       const pb = await getServerAdminPB();
@@ -149,6 +171,23 @@ export async function POST(request: NextRequest) {
         status: "sent",
         sent_at: new Date().toISOString(),
       });
+
+      // Update the email send with threading data (createEmailSend doesn't support these yet)
+      // Find the record we just created and update it
+      if (result.id) {
+        const sends = await pb.collection("email_sends").getList(1, 1, {
+          filter: `resend_id = "${result.id}"`,
+          sort: "-created",
+        });
+        if (sends.items.length > 0) {
+          await pb.collection("email_sends").update(sends.items[0].id, {
+            message_id: generatedMessageId,
+            thread_id: result.threadId || threadId || "",
+            in_reply_to: inReplyTo || "",
+            is_follow_up: isFollowUp || false,
+          });
+        }
+      }
     } catch (dbError) {
       console.error("Failed to record email send:", dbError);
       // Don't fail the request if DB recording fails
@@ -157,6 +196,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       id: result.id,
+      threadId: result.threadId,
       provider,
     });
   } catch (error) {

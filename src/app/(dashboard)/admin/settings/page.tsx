@@ -40,6 +40,8 @@ import {
   Copy,
   Trash2,
   UserPlus,
+  Radio,
+  CircleDot,
 } from "lucide-react";
 import type { User, EmailProvider, AppSetting, Invite } from "@/types";
 
@@ -56,6 +58,11 @@ export default function AdminSettingsPage() {
   const [gmailEmail, setGmailEmail] = useState("");
   const [isGmailConnected, setIsGmailConnected] = useState(false);
   const [senderName, setSenderName] = useState("");
+
+  // Gmail Watch state
+  const [isWatchActive, setIsWatchActive] = useState(false);
+  const [watchExpiry, setWatchExpiry] = useState<string>("");
+  const [isTogglingWatch, setIsTogglingWatch] = useState(false);
 
   // Invites state
   const [invites, setInvites] = useState<Invite[]>([]);
@@ -96,6 +103,16 @@ export default function AdminSettingsPage() {
           }
           if (setting.key === "gmail_refresh_token") {
             setIsGmailConnected(true);
+          }
+          if (setting.key === "gmail_watch_expiry") {
+            const expiration = (setting.value as { expiration?: string })?.expiration;
+            if (expiration) {
+              const expiresAt = parseInt(expiration);
+              if (expiresAt > Date.now()) {
+                setIsWatchActive(true);
+                setWatchExpiry(new Date(expiresAt).toLocaleString());
+              }
+            }
           }
         }
 
@@ -267,6 +284,72 @@ export default function AdminSettingsPage() {
         description: "Failed to disconnect Gmail.",
         variant: "destructive",
       });
+    }
+  };
+
+  const startWatch = async () => {
+    setIsTogglingWatch(true);
+    try {
+      const response = await fetch("/api/gmail/watch", { method: "POST" });
+      const data = await response.json();
+
+      if (data.success) {
+        setIsWatchActive(true);
+        if (data.expiration) {
+          setWatchExpiry(new Date(parseInt(data.expiration)).toLocaleString());
+        }
+        toast({
+          title: "Gmail Watch Started",
+          description: "Now monitoring your inbox for replies. Watch will auto-renew.",
+        });
+      } else {
+        toast({
+          title: "Error",
+          description: data.error || "Failed to start Gmail watch",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error("Start watch error:", error);
+      toast({
+        title: "Error",
+        description: "Failed to start Gmail watch. Check your Pub/Sub configuration.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsTogglingWatch(false);
+    }
+  };
+
+  const stopWatch = async () => {
+    setIsTogglingWatch(true);
+    try {
+      const response = await fetch("/api/gmail/watch", { method: "DELETE" });
+      const data = await response.json();
+
+      if (data.success) {
+        setIsWatchActive(false);
+        setWatchExpiry("");
+        toast({
+          title: "Gmail Watch Stopped",
+          description: "No longer monitoring your inbox for replies.",
+        });
+      } else {
+        toast({
+          title: "Error",
+          description: data.error || "Failed to stop Gmail watch",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error("Stop watch error:", error);
+      toast({
+        title: "Error",
+        description: "Failed to stop Gmail watch.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsTogglingWatch(false);
     }
   };
 
@@ -510,6 +593,46 @@ export default function AdminSettingsPage() {
                         This controls the name recipients see in their inbox (e.g. “{senderName || "Your Name"} &lt;{gmailEmail || "you@company.com"}&gt;”).
                       </p>
                     </div>
+
+                    {/* Gmail Inbox Watch */}
+                    {isGmailConnected && (
+                      <div className="p-4 border rounded-lg space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <h4 className="text-sm font-medium flex items-center gap-2">
+                              {isWatchActive ? (
+                                <Radio className="w-4 h-4 text-green-600" />
+                              ) : (
+                                <CircleDot className="w-4 h-4 text-muted-foreground" />
+                              )}
+                              Inbox Monitoring
+                            </h4>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              {isWatchActive
+                                ? `Active — monitoring for replies and out-of-office emails. Expires ${watchExpiry}`
+                                : "Start monitoring your inbox to automatically detect replies and out-of-office emails."}
+                            </p>
+                          </div>
+                          <Button
+                            variant={isWatchActive ? "outline" : "default"}
+                            size="sm"
+                            onClick={isWatchActive ? stopWatch : startWatch}
+                            disabled={isTogglingWatch}
+                          >
+                            {isTogglingWatch ? (
+                              <>
+                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                {isWatchActive ? "Stopping..." : "Starting..."}
+                              </>
+                            ) : isWatchActive ? (
+                              "Stop Monitoring"
+                            ) : (
+                              "Start Monitoring"
+                            )}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Setup Instructions */}
                     {!isGmailConnected && (

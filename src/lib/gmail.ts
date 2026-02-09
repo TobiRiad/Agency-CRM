@@ -13,11 +13,16 @@ export interface SendGmailParams {
   html: string;
   from?: string;
   replyTo?: string;
+  // Threading support
+  threadId?: string; // Gmail thread ID to send in the same thread
+  inReplyTo?: string; // Message-ID of the email we're replying to
+  references?: string; // Space-separated list of Message-IDs in the thread
 }
 
 export interface SendGmailResult {
   success: boolean;
   id?: string;
+  threadId?: string; // Gmail thread ID from the response
   error?: string;
 }
 
@@ -37,10 +42,15 @@ function createGmailClient(config: GmailConfig) {
 function createEmailMessage(params: SendGmailParams, fromEmail: string): string {
   const boundary = 'boundary_' + Date.now().toString(16);
   
+  // Generate a Message-ID for this email
+  const domain = fromEmail.split('@')[1] || 'crm.local';
+  const messageId = `<${Date.now()}.${Math.random().toString(36).slice(2)}@${domain}>`;
+  
   const emailLines = [
     `From: ${params.from || fromEmail}`,
     `To: ${params.to}`,
     `Subject: ${params.subject}`,
+    `Message-ID: ${messageId}`,
     `MIME-Version: 1.0`,
     `Content-Type: multipart/alternative; boundary="${boundary}"`,
     '',
@@ -52,8 +62,21 @@ function createEmailMessage(params: SendGmailParams, fromEmail: string): string 
     `--${boundary}--`,
   ];
 
+  // Insert optional headers before MIME-Version line
+  const mimeLineIndex = emailLines.indexOf('MIME-Version: 1.0');
+
   if (params.replyTo) {
-    emailLines.splice(3, 0, `Reply-To: ${params.replyTo}`);
+    emailLines.splice(mimeLineIndex, 0, `Reply-To: ${params.replyTo}`);
+  }
+
+  // Threading headers for follow-ups
+  if (params.inReplyTo) {
+    const insertAt = emailLines.indexOf('MIME-Version: 1.0');
+    emailLines.splice(insertAt, 0, `In-Reply-To: ${params.inReplyTo}`);
+  }
+  if (params.references) {
+    const insertAt = emailLines.indexOf('MIME-Version: 1.0');
+    emailLines.splice(insertAt, 0, `References: ${params.references}`);
   }
 
   const email = emailLines.join('\r\n');
@@ -74,16 +97,22 @@ export async function sendGmail(
     const gmail = createGmailClient(config);
     const raw = createEmailMessage(params, config.userEmail);
 
+    const requestBody: { raw: string; threadId?: string } = { raw };
+    
+    // If we're replying in the same thread, set the threadId
+    if (params.threadId) {
+      requestBody.threadId = params.threadId;
+    }
+
     const response = await gmail.users.messages.send({
       userId: 'me',
-      requestBody: {
-        raw,
-      },
+      requestBody,
     });
 
     return {
       success: true,
       id: response.data.id || undefined,
+      threadId: response.data.threadId || undefined,
     };
   } catch (error) {
     console.error('Gmail send error:', error);
@@ -126,7 +155,10 @@ export function getGmailAuthUrl(clientId: string, clientSecret: string, redirect
   
   return oauth2Client.generateAuthUrl({
     access_type: 'offline',
-    scope: ['https://www.googleapis.com/auth/gmail.send'],
+    scope: [
+      'https://www.googleapis.com/auth/gmail.send',
+      'https://www.googleapis.com/auth/gmail.readonly', // Read incoming emails
+    ],
     prompt: 'consent', // Force consent to get refresh token
   });
 }
@@ -165,4 +197,185 @@ export async function verifyGmailConnection(config: GmailConfig): Promise<boolea
     console.error('Gmail connection verification failed:', error);
     return false;
   }
+}
+
+// ==========================================
+// Gmail Pub/Sub Watch & Inbox Reading
+// ==========================================
+
+export interface GmailWatchResult {
+  historyId: string;
+  expiration: string; // Unix timestamp in ms
+}
+
+/**
+ * Start watching the Gmail inbox for new messages via Pub/Sub.
+ * The topic must be created in Google Cloud Console and Gmail API must have
+ * publish permissions on it.
+ */
+export async function startGmailWatch(
+  config: GmailConfig,
+  topicName: string
+): Promise<GmailWatchResult> {
+  const gmail = createGmailClient(config);
+
+  const response = await gmail.users.watch({
+    userId: 'me',
+    requestBody: {
+      topicName,
+      labelIds: ['INBOX'],
+    },
+  });
+
+  return {
+    historyId: response.data.historyId || '',
+    expiration: response.data.expiration || '',
+  };
+}
+
+/**
+ * Stop watching the Gmail inbox.
+ */
+export async function stopGmailWatch(config: GmailConfig): Promise<void> {
+  const gmail = createGmailClient(config);
+  await gmail.users.stop({ userId: 'me' });
+}
+
+export interface GmailMessage {
+  id: string;
+  threadId: string;
+  from: string;
+  to: string;
+  subject: string;
+  date: string;
+  bodyText: string;
+  bodyHtml: string;
+  messageIdHeader: string; // The Message-ID header value
+  inReplyTo: string; // The In-Reply-To header value
+  references: string; // The References header value
+}
+
+/**
+ * Get new messages since a given historyId.
+ * Returns the message IDs of new messages and the latest historyId.
+ */
+export async function getNewMessageIds(
+  config: GmailConfig,
+  startHistoryId: string
+): Promise<{ messageIds: string[]; latestHistoryId: string }> {
+  const gmail = createGmailClient(config);
+
+  try {
+    const response = await gmail.users.history.list({
+      userId: 'me',
+      startHistoryId,
+      historyTypes: ['messageAdded'],
+      labelId: 'INBOX',
+    });
+
+    const messageIds: string[] = [];
+    const histories = response.data.history || [];
+
+    for (const history of histories) {
+      const addedMessages = history.messagesAdded || [];
+      for (const added of addedMessages) {
+        if (added.message?.id) {
+          messageIds.push(added.message.id);
+        }
+      }
+    }
+
+    return {
+      messageIds: Array.from(new Set(messageIds)), // Deduplicate
+      latestHistoryId: response.data.historyId || startHistoryId,
+    };
+  } catch (error: unknown) {
+    // If historyId is too old, Gmail returns 404. We should handle this gracefully.
+    const err = error as { code?: number };
+    if (err.code === 404) {
+      console.warn('Gmail history ID expired, need to do a full sync');
+      return { messageIds: [], latestHistoryId: startHistoryId };
+    }
+    throw error;
+  }
+}
+
+/**
+ * Fetch a full Gmail message by its ID and parse out the useful fields.
+ */
+export async function getGmailMessage(
+  config: GmailConfig,
+  messageId: string
+): Promise<GmailMessage | null> {
+  const gmail = createGmailClient(config);
+
+  try {
+    const response = await gmail.users.messages.get({
+      userId: 'me',
+      id: messageId,
+      format: 'full',
+    });
+
+    const message = response.data;
+    const headers = message.payload?.headers || [];
+
+    const getHeader = (name: string): string => {
+      const header = headers.find(h => h.name?.toLowerCase() === name.toLowerCase());
+      return header?.value || '';
+    };
+
+    // Extract plain text body from the message parts
+    let bodyText = '';
+    let bodyHtml = '';
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const extractParts = (payload: any): void => {
+      if (!payload) return;
+
+      if (payload.mimeType === 'text/plain' && payload.body?.data) {
+        bodyText = Buffer.from(payload.body.data, 'base64').toString('utf-8');
+      }
+      if (payload.mimeType === 'text/html' && payload.body?.data) {
+        bodyHtml = Buffer.from(payload.body.data, 'base64').toString('utf-8');
+      }
+
+      if (payload.parts) {
+        for (const part of payload.parts) {
+          extractParts(part);
+        }
+      }
+    };
+
+    extractParts(message.payload);
+
+    // If no plain text, strip HTML tags as a fallback
+    if (!bodyText && bodyHtml) {
+      bodyText = bodyHtml.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+    }
+
+    return {
+      id: message.id || messageId,
+      threadId: message.threadId || '',
+      from: getHeader('From'),
+      to: getHeader('To'),
+      subject: getHeader('Subject'),
+      date: getHeader('Date'),
+      bodyText,
+      bodyHtml,
+      messageIdHeader: getHeader('Message-ID'),
+      inReplyTo: getHeader('In-Reply-To'),
+      references: getHeader('References'),
+    };
+  } catch (error) {
+    console.error(`Failed to fetch Gmail message ${messageId}:`, error);
+    return null;
+  }
+}
+
+/**
+ * Extract just the email address from a "Name <email>" formatted string.
+ */
+export function extractEmailAddress(fromHeader: string): string {
+  const match = fromHeader.match(/<([^>]+)>/);
+  return match ? match[1].toLowerCase() : fromHeader.toLowerCase().trim();
 }
