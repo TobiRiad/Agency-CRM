@@ -258,14 +258,17 @@ export default function CampaignPage() {
         });
 
         if (sourceCompanyIds.size > 0) {
+          // Batch fetch all source companies in a single query instead of N individual fetches
+          const idsArray = Array.from(sourceCompanyIds);
           const sourceCompaniesMap = new Map<string, Company>();
-          for (const companyId of Array.from(sourceCompanyIds)) {
-            try {
-              const company = await pb.collection('companies').getOne<Company>(companyId);
-              sourceCompaniesMap.set(companyId, company);
-            } catch (error) {
-              console.error(`Failed to load source company ${companyId}:`, error);
+          try {
+            const filter = idsArray.map(id => pb.filter('id = {:id}', { id })).join(' || ');
+            const result = await pb.collection('companies').getList<Company>(1, 500, { filter });
+            for (const company of result.items) {
+              sourceCompaniesMap.set(company.id, company);
             }
+          } catch (error) {
+            console.error('Failed to load source companies:', error);
           }
           setSourceCompanies(sourceCompaniesMap);
         }
@@ -298,20 +301,28 @@ export default function CampaignPage() {
       if (campaignData.kind === 'leads') {
         const user = getCurrentUser(pb);
         if (user) {
-          // Load contacts grouped by company
+          // Load ALL contacts for this campaign once, then group by company in memory
+          // (instead of N+1 queries per company)
           const contactsByCompany = new Map<string, Contact[]>();
-          for (const company of companiesData) {
-            const companyPeople = await getContactsByCompany(pb, company.id);
-            contactsByCompany.set(company.id, companyPeople);
+          const allCompanyContacts = await pb.collection('contacts').getList<Contact>(1, 500, {
+            filter: pb.filter('campaign = {:campaignId}', { campaignId }),
+            expand: 'created_by',
+          });
+          for (const contact of allCompanyContacts.items) {
+            if (contact.company) {
+              const existing = contactsByCompany.get(contact.company) || [];
+              existing.push(contact);
+              contactsByCompany.set(contact.company, existing);
+            }
           }
           setCompanyContacts(contactsByCompany);
 
-          // Load AI scoring configs
-          const configs = await getAIScoringConfigs(pb, campaignId);
+          // Load AI scoring configs and outreach campaigns in parallel
+          const [configs, outreach] = await Promise.all([
+            getAIScoringConfigs(pb, campaignId),
+            getOutreachCampaigns(pb, user.id),
+          ]);
           setAiConfigs(configs);
-
-          // Load outreach campaigns for push dropdown
-          const outreach = await getOutreachCampaigns(pb, user.id);
           setOutreachCampaigns(outreach);
         }
       }

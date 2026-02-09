@@ -48,28 +48,88 @@ interface CampaignStats {
   emailSentCount: number;
 }
 
-async function getCampaignStats(pb: PocketBase, campaignId: string): Promise<CampaignStats> {
+async function getAllCampaignStats(pb: PocketBase, campaignIds: string[]): Promise<Map<string, CampaignStats>> {
+  const statsMap = new Map<string, CampaignStats>();
+  if (campaignIds.length === 0) return statsMap;
+
+  // Initialize all campaigns with zero counts
+  for (const id of campaignIds) {
+    statsMap.set(id, { contactCount: 0, emailSentCount: 0 });
+  }
+
   try {
-    // Get contact count
-    const contactsResult = await pb.collection('contacts').getList(1, 1, {
-      filter: pb.filter('campaign = {:campaignId}', { campaignId }),
-      fields: 'id',
-    });
-    
-    // Get email send count
-    const emailsResult = await pb.collection('email_sends').getList(1, 1, {
-      filter: pb.filter('campaign = {:campaignId}', { campaignId }),
-      fields: 'id',
-    });
-    
-    return {
-      contactCount: contactsResult.totalItems,
-      emailSentCount: emailsResult.totalItems,
-    };
+    // Fetch ALL contacts and email_sends in just 2 queries, only getting the campaign field
+    const [allContacts, allEmails] = await Promise.all([
+      pb.collection('contacts').getList(1, 1, {
+        fields: 'id,campaign',
+        filter: campaignIds.map(id => pb.filter('campaign = {:id}', { id })).join(' || '),
+        skipTotal: false,
+      }).then(async (first) => {
+        // If there are more than 1 page, we just need the count per campaign
+        // Fetch all with just campaign field for counting
+        if (first.totalItems <= 500) {
+          const all = await pb.collection('contacts').getList(1, 500, {
+            fields: 'campaign',
+            filter: campaignIds.map(id => pb.filter('campaign = {:id}', { id })).join(' || '),
+          });
+          return all.items;
+        }
+        // For very large datasets, fall back to per-campaign counts
+        return null;
+      }),
+      pb.collection('email_sends').getList(1, 1, {
+        fields: 'id,campaign',
+        filter: campaignIds.map(id => pb.filter('campaign = {:id}', { id })).join(' || '),
+        skipTotal: false,
+      }).then(async (first) => {
+        if (first.totalItems <= 500) {
+          const all = await pb.collection('email_sends').getList(1, 500, {
+            fields: 'campaign',
+            filter: campaignIds.map(id => pb.filter('campaign = {:id}', { id })).join(' || '),
+          });
+          return all.items;
+        }
+        return null;
+      }),
+    ]);
+
+    // Count contacts per campaign
+    if (allContacts) {
+      for (const contact of allContacts) {
+        const stats = statsMap.get(contact.campaign);
+        if (stats) stats.contactCount++;
+      }
+    } else {
+      // Fallback: parallel per-campaign counts for very large datasets
+      await Promise.all(campaignIds.map(async (id) => {
+        const result = await pb.collection('contacts').getList(1, 1, {
+          filter: pb.filter('campaign = {:id}', { id }),
+          fields: 'id',
+        });
+        statsMap.get(id)!.contactCount = result.totalItems;
+      }));
+    }
+
+    // Count emails per campaign
+    if (allEmails) {
+      for (const email of allEmails) {
+        const stats = statsMap.get(email.campaign);
+        if (stats) stats.emailSentCount++;
+      }
+    } else {
+      await Promise.all(campaignIds.map(async (id) => {
+        const result = await pb.collection('email_sends').getList(1, 1, {
+          filter: pb.filter('campaign = {:id}', { id }),
+          fields: 'id',
+        });
+        statsMap.get(id)!.emailSentCount = result.totalItems;
+      }));
+    }
   } catch (error) {
     console.error('Failed to get campaign stats:', error);
-    return { contactCount: 0, emailSentCount: 0 };
   }
+
+  return statsMap;
 }
 
 export default function CampaignsPage() {
@@ -89,14 +149,8 @@ export default function CampaignsPage() {
         const data = await getCampaigns(pb, user.id);
         setCampaigns(data);
         
-        // Fetch stats for all campaigns
-        const statsMap = new Map<string, CampaignStats>();
-        await Promise.all(
-          data.map(async (campaign) => {
-            const stats = await getCampaignStats(pb, campaign.id);
-            statsMap.set(campaign.id, stats);
-          })
-        );
+        // Fetch stats for all campaigns in batch (2 queries instead of 2*N)
+        const statsMap = await getAllCampaignStats(pb, data.map(c => c.id));
         setCampaignStats(statsMap);
       }
     } catch (error) {
