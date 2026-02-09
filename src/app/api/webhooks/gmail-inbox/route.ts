@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerAdminPB, getAppSetting, setAppSetting, getInboxMessageByGmailId } from '@/lib/pocketbase';
-import { getNewMessageIds, getGmailMessage, type GmailConfig } from '@/lib/gmail';
+import { getNewMessageIds, getGmailMessage, startGmailWatch, type GmailConfig } from '@/lib/gmail';
 import { processIncomingEmail } from '@/lib/inbox-agent';
 
 /**
@@ -105,6 +105,29 @@ export async function POST(request: NextRequest) {
       } catch (error) {
         console.error(`Gmail webhook: Error processing message ${msgId}:`, error);
       }
+    }
+
+    // Auto-renew Gmail watch if it's close to expiring (within 24 hours)
+    try {
+      const watchData = await getAppSetting(pb, 'gmail_watch_expiry');
+      const expiration = (watchData?.expiration as string) || '';
+      if (expiration) {
+        const expiresAt = parseInt(expiration);
+        const oneDayFromNow = Date.now() + 24 * 60 * 60 * 1000;
+        if (expiresAt < oneDayFromNow) {
+          const topicName = process.env.GOOGLE_PUBSUB_TOPIC;
+          if (topicName && gmailConfig) {
+            const watchResult = await startGmailWatch(gmailConfig, topicName);
+            await setAppSetting(pb, 'gmail_watch_expiry', {
+              expiration: watchResult.expiration,
+              started_at: new Date().toISOString(),
+            });
+            console.log('Gmail webhook: Auto-renewed watch (was expiring soon)');
+          }
+        }
+      }
+    } catch (renewError) {
+      console.error('Gmail webhook: Failed to auto-renew watch:', renewError);
     }
 
     return NextResponse.json({
