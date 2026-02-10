@@ -809,32 +809,50 @@ export async function cancelContactFollowUp(pb: PocketBase, contactId: string): 
   });
 }
 
-// Find contact by email across all outreach campaigns (case-insensitive)
+// Find contact by email across all outreach campaigns
 export async function findContactByEmail(pb: PocketBase, email: string): Promise<Contact | null> {
   const normalizedEmail = email.toLowerCase().trim();
   console.log(`findContactByEmail: searching for "${normalizedEmail}"`);
 
+  // PocketBase's filter parser treats @ as special. Use direct API fetch with proper encoding.
   try {
-    // Simple query without expand to avoid 400 errors from missing relations
-    const result = await pb.collection('contacts').getList<Contact>(1, 1, {
-      filter: `email = "${normalizedEmail}"`,
-      sort: '-created',
+    const baseUrl = pb.baseURL || pb.baseUrl;
+    const token = pb.authStore.token;
+    const encodedFilter = encodeURIComponent(`email = "${normalizedEmail}"`);
+    const url = `${baseUrl}/api/collections/contacts/records?page=1&perPage=1&filter=${encodedFilter}&sort=-created`;
+
+    console.log(`findContactByEmail: fetching ${url}`);
+
+    const response = await fetch(url, {
+      headers: {
+        'Authorization': token ? `Bearer ${token}` : '',
+      },
     });
 
-    if (result.items.length > 0) {
-      console.log(`findContactByEmail: found contact ${result.items[0].id} (${result.items[0].email})`);
-      return result.items[0];
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`findContactByEmail: API returned ${response.status}: ${errorText}`);
+
+      // Fallback: try fetching all contacts and filtering in memory
+      console.log('findContactByEmail: falling back to in-memory search...');
+      const allResult = await pb.collection('contacts').getList<Contact>(1, 500, {
+        sort: '-created',
+      });
+      const match = allResult.items.find(
+        (c) => c.email.toLowerCase().trim() === normalizedEmail
+      );
+      if (match) {
+        console.log(`findContactByEmail: found via in-memory search — contact ${match.id} (${match.email})`);
+        return match;
+      }
+      console.log(`findContactByEmail: no contact found in ${allResult.items.length} contacts`);
+      return null;
     }
 
-    // Fallback: case-insensitive search
-    const fuzzyResult = await pb.collection('contacts').getList<Contact>(1, 1, {
-      filter: `email ~ "${normalizedEmail}"`,
-      sort: '-created',
-    });
-
-    if (fuzzyResult.items.length > 0) {
-      console.log(`findContactByEmail: found fuzzy match — contact ${fuzzyResult.items[0].id} (${fuzzyResult.items[0].email})`);
-      return fuzzyResult.items[0];
+    const data = await response.json();
+    if (data.items && data.items.length > 0) {
+      console.log(`findContactByEmail: found contact ${data.items[0].id} (${data.items[0].email})`);
+      return data.items[0] as Contact;
     }
 
     console.log(`findContactByEmail: no contact found for "${normalizedEmail}"`);
