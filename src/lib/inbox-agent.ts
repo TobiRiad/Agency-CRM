@@ -180,6 +180,7 @@ export async function processIncomingEmail(
   const senderEmail = extractEmailAddress(message.from);
 
   // 1. Find the contact
+  console.log(`Inbox agent: Looking up contact for email: "${senderEmail}" (from header: "${message.from}")`);
   const contact = await findContactByEmail(pb, senderEmail);
 
   if (!contact) {

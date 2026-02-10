@@ -803,15 +803,25 @@ export async function cancelContactFollowUp(pb: PocketBase, contactId: string): 
   });
 }
 
-// Find contact by email across all outreach campaigns
+// Find contact by email across all outreach campaigns (case-insensitive)
 export async function findContactByEmail(pb: PocketBase, email: string): Promise<Contact | null> {
+  const normalizedEmail = email.toLowerCase().trim();
   try {
+    // Try exact match first
     return await pb.collection('contacts').getFirstListItem<Contact>(
-      pb.filter('email = {:email}', { email }),
+      pb.filter('email = {:email}', { email: normalizedEmail }),
       { expand: 'company,campaign', sort: '-created' }
     );
   } catch {
-    return null;
+    // Fallback: case-insensitive search using ~ operator
+    try {
+      return await pb.collection('contacts').getFirstListItem<Contact>(
+        pb.filter('email ~ {:email}', { email: normalizedEmail }),
+        { expand: 'company,campaign', sort: '-created' }
+      );
+    } catch {
+      return null;
+    }
   }
 }
 
