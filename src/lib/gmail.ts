@@ -266,27 +266,39 @@ export async function getNewMessageIds(
   const gmail = createGmailClient(config);
 
   try {
+    // Fetch history with both messageAdded and messagesAdded events
+    // Don't filter by labelId as it can be too restrictive
     const response = await gmail.users.history.list({
       userId: 'me',
       startHistoryId,
-      historyTypes: ['messageAdded'],
-      labelId: 'INBOX',
     });
 
     const messageIds: string[] = [];
     const histories = response.data.history || [];
 
     for (const history of histories) {
+      // Check messagesAdded (new messages arriving)
       const addedMessages = history.messagesAdded || [];
       for (const added of addedMessages) {
         if (added.message?.id) {
           messageIds.push(added.message.id);
         }
       }
+      // Also check messages array directly (some history events use this)
+      if (history.messages) {
+        for (const msg of history.messages) {
+          if (msg.id) {
+            messageIds.push(msg.id);
+          }
+        }
+      }
     }
 
+    const deduplicated = Array.from(new Set(messageIds));
+    console.log(`Gmail history: ${histories.length} history records, ${deduplicated.length} unique messages since historyId ${startHistoryId}`);
+
     return {
-      messageIds: Array.from(new Set(messageIds)), // Deduplicate
+      messageIds: deduplicated,
       latestHistoryId: response.data.historyId || startHistoryId,
     };
   } catch (error: unknown) {
@@ -294,7 +306,25 @@ export async function getNewMessageIds(
     const err = error as { code?: number };
     if (err.code === 404) {
       console.warn('Gmail history ID expired, need to do a full sync');
-      return { messageIds: [], latestHistoryId: startHistoryId };
+      // On 404, fetch recent messages directly as a fallback
+      try {
+        const messages = await gmail.users.messages.list({
+          userId: 'me',
+          maxResults: 10,
+          labelIds: ['INBOX'],
+          q: 'is:unread newer_than:1h',
+        });
+        const recentIds = (messages.data.messages || [])
+          .map(m => m.id)
+          .filter((id): id is string => !!id);
+        // Get the current historyId from profile
+        const profile = await gmail.users.getProfile({ userId: 'me' });
+        const currentHistoryId = profile.data.historyId || startHistoryId;
+        console.log(`Gmail history fallback: found ${recentIds.length} recent unread messages`);
+        return { messageIds: recentIds, latestHistoryId: currentHistoryId };
+      } catch {
+        return { messageIds: [], latestHistoryId: startHistoryId };
+      }
     }
     throw error;
   }

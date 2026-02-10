@@ -63,7 +63,7 @@ export async function POST(request: NextRequest) {
       storedHistoryId
     );
 
-    console.log(`Gmail webhook: Found ${messageIds.length} new messages`);
+    console.log(`Gmail webhook: Found ${messageIds.length} new messages (storedHistoryId: ${storedHistoryId}, newHistoryId: ${newHistoryId}, latestHistoryId: ${latestHistoryId})`);
 
     // Update stored history ID
     await setAppSetting(pb, 'gmail_history_id', { history_id: latestHistoryId });
