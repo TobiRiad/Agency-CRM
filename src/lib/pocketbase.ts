@@ -90,19 +90,47 @@ export async function getServerAdminPB(): Promise<PocketBase> {
   // Try new PocketBase v0.23+ auth via _superusers collection first
   try {
     await pb.collection('_superusers').authWithPassword(email, password);
+    console.log('PocketBase: Authenticated via _superusers');
     return pb;
-  } catch {
-    // Fallback to legacy admin auth
+  } catch (e) {
+    console.log('PocketBase: _superusers auth failed, trying legacy admins...', e instanceof Error ? e.message : '');
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const anyPb = pb as any;
-  if (anyPb.admins?.authWithPassword) {
-    await anyPb.admins.authWithPassword(email, password);
-    return pb;
-  }
+  // Fallback: try direct API call for newer PocketBase that might not have admins helper
+  try {
+    const baseUrl = (pb.baseURL || pb.baseUrl || POCKETBASE_URL).replace(/\/+$/, '');
+    const response = await fetch(`${baseUrl}/api/collections/_superusers/auth-with-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ identity: email, password }),
+    });
 
-  throw new Error('PocketBase admin auth API not available');
+    if (response.ok) {
+      const data = await response.json();
+      pb.authStore.save(data.token, data.record);
+      console.log('PocketBase: Authenticated via direct _superusers API call');
+      return pb;
+    }
+
+    // Try legacy admin endpoint
+    const legacyResponse = await fetch(`${baseUrl}/api/admins/auth-with-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ identity: email, password }),
+    });
+
+    if (legacyResponse.ok) {
+      const data = await legacyResponse.json();
+      pb.authStore.save(data.token, data.record || data.admin);
+      console.log('PocketBase: Authenticated via legacy admins API call');
+      return pb;
+    }
+
+    throw new Error(`Auth failed: _superusers=${response.status}, admins=${legacyResponse.status}`);
+  } catch (error) {
+    console.error('PocketBase admin auth error:', error);
+    throw new Error('PocketBase admin auth failed - check POCKETBASE_ADMIN_EMAIL and POCKETBASE_ADMIN_PASSWORD');
+  }
 }
 
 // Auth functions
@@ -816,7 +844,8 @@ export async function findContactByEmail(pb: PocketBase, email: string): Promise
 
   // PocketBase's filter parser treats @ as special. Use direct API fetch with proper encoding.
   try {
-    const baseUrl = pb.baseURL || pb.baseUrl;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const baseUrl = ((pb as any).baseURL || (pb as any).baseUrl || POCKETBASE_URL).replace(/\/+$/, '');
     const token = pb.authStore.token;
     const encodedFilter = encodeURIComponent(`email = "${normalizedEmail}"`);
     const url = `${baseUrl}/api/collections/contacts/records?page=1&perPage=1&filter=${encodedFilter}&sort=-created`;
