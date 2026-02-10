@@ -87,16 +87,22 @@ export async function getServerAdminPB(): Promise<PocketBase> {
     throw new Error('Missing POCKETBASE_ADMIN_EMAIL/POCKETBASE_ADMIN_PASSWORD env vars');
   }
 
-  // PocketBase SDK supports admin auth via pb.admins in most versions.
-  // If unavailable, this will throw and surface a clear error.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const anyPb = pb as any;
-  if (!anyPb.admins?.authWithPassword) {
-    throw new Error('PocketBase admin auth API not available in this SDK version');
+  // Try new PocketBase v0.23+ auth via _superusers collection first
+  try {
+    await pb.collection('_superusers').authWithPassword(email, password);
+    return pb;
+  } catch {
+    // Fallback to legacy admin auth
   }
 
-  await anyPb.admins.authWithPassword(email, password);
-  return pb;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const anyPb = pb as any;
+  if (anyPb.admins?.authWithPassword) {
+    await anyPb.admins.authWithPassword(email, password);
+    return pb;
+  }
+
+  throw new Error('PocketBase admin auth API not available');
 }
 
 // Auth functions
