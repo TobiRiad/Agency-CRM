@@ -809,24 +809,20 @@ export async function findContactByEmail(pb: PocketBase, email: string): Promise
   console.log(`findContactByEmail: searching for "${normalizedEmail}"`);
 
   try {
-    // Try exact match first using getList (doesn't throw on empty results)
-    const exactResult = await pb.collection('contacts').getList<Contact>(1, 1, {
-      filter: pb.filter('email = {:email}', { email: normalizedEmail }),
-      expand: 'company,campaign',
+    // Simple query without expand to avoid 400 errors from missing relations
+    const result = await pb.collection('contacts').getList<Contact>(1, 1, {
+      filter: `email = "${normalizedEmail}"`,
       sort: '-created',
     });
 
-    if (exactResult.items.length > 0) {
-      console.log(`findContactByEmail: found exact match — contact ${exactResult.items[0].id} (${exactResult.items[0].email})`);
-      return exactResult.items[0];
+    if (result.items.length > 0) {
+      console.log(`findContactByEmail: found contact ${result.items[0].id} (${result.items[0].email})`);
+      return result.items[0];
     }
 
-    console.log(`findContactByEmail: no exact match, trying case-insensitive search...`);
-
-    // Fallback: case-insensitive search using ~ operator
+    // Fallback: case-insensitive search
     const fuzzyResult = await pb.collection('contacts').getList<Contact>(1, 1, {
-      filter: pb.filter('email ~ {:email}', { email: normalizedEmail }),
-      expand: 'company,campaign',
+      filter: `email ~ "${normalizedEmail}"`,
       sort: '-created',
     });
 
