@@ -838,56 +838,81 @@ export async function cancelContactFollowUp(pb: PocketBase, contactId: string): 
 }
 
 // Find contact by email across all outreach campaigns
+// Uses direct fetch to avoid PocketBase SDK compatibility issues with superuser tokens
 export async function findContactByEmail(pb: PocketBase, email: string): Promise<Contact | null> {
   const normalizedEmail = email.toLowerCase().trim();
   console.log(`findContactByEmail: searching for "${normalizedEmail}"`);
 
-  // PocketBase's filter parser treats @ as special. Use direct API fetch with proper encoding.
+  const baseUrl = POCKETBASE_URL.replace(/\/+$/, '');
+
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const baseUrl = ((pb as any).baseURL || (pb as any).baseUrl || POCKETBASE_URL).replace(/\/+$/, '');
-    const token = pb.authStore.token;
-    const encodedFilter = encodeURIComponent(`email = "${normalizedEmail}"`);
-    const url = `${baseUrl}/api/collections/contacts/records?page=1&perPage=1&filter=${encodedFilter}&sort=-created`;
+    // First, get a fresh superuser token via direct API call
+    const adminEmail = process.env.POCKETBASE_ADMIN_EMAIL;
+    const adminPassword = process.env.POCKETBASE_ADMIN_PASSWORD;
 
-    console.log(`findContactByEmail: fetching ${url}`);
+    let token = pb.authStore.token;
 
-    const response = await fetch(url, {
-      headers: {
-        'Authorization': token ? `Bearer ${token}` : '',
-      },
+    // If no token in authStore, authenticate directly
+    if (!token && adminEmail && adminPassword) {
+      const authRes = await fetch(`${baseUrl}/api/collections/_superusers/auth-with-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identity: adminEmail, password: adminPassword }),
+      });
+      if (authRes.ok) {
+        const authData = await authRes.json();
+        token = authData.token;
+      }
+    }
+
+    console.log(`findContactByEmail: using token: ${token ? token.substring(0, 20) + '...' : 'NONE'}`);
+
+    // Try filtered query first
+    const filterParam = encodeURIComponent(`email="${normalizedEmail}"`);
+    const filteredUrl = `${baseUrl}/api/collections/contacts/records?filter=${filterParam}&perPage=1`;
+
+    console.log(`findContactByEmail: trying filtered query: ${filteredUrl}`);
+
+    const filteredRes = await fetch(filteredUrl, {
+      headers: token ? { 'Authorization': token } : {},
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`findContactByEmail: API returned ${response.status}: ${errorText}`);
+    if (filteredRes.ok) {
+      const data = await filteredRes.json();
+      if (data.items && data.items.length > 0) {
+        console.log(`findContactByEmail: found contact ${data.items[0].id} (${data.items[0].email})`);
+        return data.items[0] as Contact;
+      }
+    } else {
+      console.log(`findContactByEmail: filtered query returned ${filteredRes.status}`);
+    }
 
-      // Fallback: try fetching all contacts and filtering in memory
-      console.log('findContactByEmail: falling back to in-memory search...');
-      const allResult = await pb.collection('contacts').getList<Contact>(1, 500, {
-        sort: '-created',
-      });
-      const match = allResult.items.find(
-        (c) => c.email.toLowerCase().trim() === normalizedEmail
+    // Fallback: fetch all contacts and search in memory
+    console.log('findContactByEmail: trying unfiltered fetch...');
+    const allUrl = `${baseUrl}/api/collections/contacts/records?perPage=500`;
+    const allRes = await fetch(allUrl, {
+      headers: token ? { 'Authorization': token } : {},
+    });
+
+    if (allRes.ok) {
+      const data = await allRes.json();
+      console.log(`findContactByEmail: fetched ${data.items?.length || 0} contacts`);
+      const match = (data.items || []).find(
+        (c: Contact) => c.email?.toLowerCase().trim() === normalizedEmail
       );
       if (match) {
         console.log(`findContactByEmail: found via in-memory search — contact ${match.id} (${match.email})`);
-        return match;
+        return match as Contact;
       }
-      console.log(`findContactByEmail: no contact found in ${allResult.items.length} contacts`);
-      return null;
-    }
-
-    const data = await response.json();
-    if (data.items && data.items.length > 0) {
-      console.log(`findContactByEmail: found contact ${data.items[0].id} (${data.items[0].email})`);
-      return data.items[0] as Contact;
+    } else {
+      const errText = await allRes.text();
+      console.error(`findContactByEmail: unfiltered query returned ${allRes.status}: ${errText}`);
     }
 
     console.log(`findContactByEmail: no contact found for "${normalizedEmail}"`);
     return null;
   } catch (error) {
-    console.error(`findContactByEmail: error searching for "${normalizedEmail}":`, error);
+    console.error(`findContactByEmail: error:`, error);
     return null;
   }
 }
