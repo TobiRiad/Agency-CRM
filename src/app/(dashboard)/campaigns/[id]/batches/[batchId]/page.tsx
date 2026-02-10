@@ -213,6 +213,9 @@ export default function BatchDetailPage() {
   // State for push to outreach
   const [outreachCampaigns, setOutreachCampaigns] = useState<Campaign[]>([]);
   const [pushingCompanyId, setPushingCompanyId] = useState<string | null>(null);
+  const [isPushAllMode, setIsPushAllMode] = useState(false);
+  const [bulkPushProgress, setBulkPushProgress] = useState({ current: 0, total: 0, created: 0 });
+  const [isBulkPushing, setIsBulkPushing] = useState(false);
   const [selectedOutreachCampaign, setSelectedOutreachCampaign] = useState<string>("");
   const [selectedFunnelStage, setSelectedFunnelStage] = useState<string>("");
   const [selectedOutreachBatch, setSelectedOutreachBatch] = useState<string>("");
@@ -1154,6 +1157,90 @@ export default function BatchDetailPage() {
     }
   };
 
+  // Bulk push all filtered companies to outreach
+  const handlePushAllToOutreach = async () => {
+    if (!selectedOutreachCampaign) {
+      toast({
+        title: "Select Campaign",
+        description: "Please select an outreach campaign to push to.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Get companies that haven't been pushed to this campaign yet
+    const companiesToPush = filteredCompanies.filter(
+      c => !(c.pushed_to_campaigns || []).includes(selectedOutreachCampaign)
+    );
+
+    if (companiesToPush.length === 0) {
+      toast({
+        title: "Nothing to Push",
+        description: "All filtered companies have already been pushed to this campaign.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsBulkPushing(true);
+    setBulkPushProgress({ current: 0, total: companiesToPush.length, created: 0 });
+
+    let totalCreated = 0;
+    try {
+      const pb = getClientPB();
+      for (let i = 0; i < companiesToPush.length; i++) {
+        const company = companiesToPush[i];
+        setBulkPushProgress(prev => ({ ...prev, current: i + 1 }));
+
+        try {
+          const createdContacts = await pushCompanyToOutreach(
+            pb,
+            company.id,
+            selectedOutreachCampaign,
+            selectedFunnelStage && selectedFunnelStage !== "__none__" ? selectedFunnelStage : undefined,
+            selectedOutreachBatch && selectedOutreachBatch !== "__none__" ? selectedOutreachBatch : undefined
+          );
+          totalCreated += createdContacts.length;
+
+          // Update local state
+          setCompanies(prevCompanies =>
+            prevCompanies.map(c => {
+              if (c.id === company.id) {
+                const existingPushed = c.pushed_to_campaigns || [];
+                if (!existingPushed.includes(selectedOutreachCampaign)) {
+                  return { ...c, pushed_to_campaigns: [...existingPushed, selectedOutreachCampaign] };
+                }
+              }
+              return c;
+            })
+          );
+        } catch (err) {
+          console.error(`Failed to push company ${company.name}:`, err);
+        }
+      }
+
+      setBulkPushProgress(prev => ({ ...prev, created: totalCreated }));
+      toast({
+        title: "Bulk Push Complete",
+        description: `Pushed ${companiesToPush.length} companies, created ${totalCreated} contact(s) in outreach campaign.`,
+      });
+      setIsPushDialogOpen(false);
+      setIsPushAllMode(false);
+      setSelectedOutreachCampaign("");
+      setSelectedFunnelStage("");
+      setSelectedOutreachBatch("");
+    } catch (error) {
+      console.error("Bulk push failed:", error);
+      toast({
+        title: "Error",
+        description: "Bulk push failed. Some companies may have been pushed.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsBulkPushing(false);
+    }
+  };
+
   // Load funnel stages and batches when outreach campaign is selected
   const handleOutreachCampaignSelect = async (campaignId: string) => {
     setSelectedOutreachCampaign(campaignId);
@@ -1349,6 +1436,31 @@ export default function BatchDetailPage() {
               />
             </div>
           </div>
+
+          {/* Push All to Outreach Button */}
+          {outreachCampaigns.length > 0 && filteredCompanies.length > 0 && (
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsPushAllMode(true);
+                setPushingCompanyId(null);
+                setIsPushDialogOpen(true);
+              }}
+              disabled={isBulkPushing}
+            >
+              {isBulkPushing ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Pushing {bulkPushProgress.current}/{bulkPushProgress.total}
+                </>
+              ) : (
+                <>
+                  <ArrowRight className="mr-2 h-4 w-4" />
+                  Push All ({filteredCompanies.length})
+                </>
+              )}
+            </Button>
+          )}
 
           {/* Run AI Button */}
           {aiConfigs.length > 0 && (
@@ -2314,6 +2426,7 @@ export default function BatchDetailPage() {
           setIsPushDialogOpen(open);
           if (!open) {
             setPushingCompanyId(null);
+            setIsPushAllMode(false);
             setSelectedOutreachCampaign("");
             setSelectedFunnelStage("");
             setSelectedOutreachBatch("");
@@ -2321,9 +2434,12 @@ export default function BatchDetailPage() {
         }}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Push to Outreach Campaign</DialogTitle>
+              <DialogTitle>{isPushAllMode ? "Push All to Outreach" : "Push to Outreach Campaign"}</DialogTitle>
               <DialogDescription>
-                Push {companies.find(c => c.id === pushingCompanyId)?.name || "this company"}&apos;s contacts to an outreach campaign.
+                {isPushAllMode
+                  ? `Push ${filteredCompanies.filter(c => !(c.pushed_to_campaigns || []).includes(selectedOutreachCampaign)).length || filteredCompanies.length} filtered companies to an outreach campaign.`
+                  : `Push ${companies.find(c => c.id === pushingCompanyId)?.name || "this company"}'s contacts to an outreach campaign.`
+                }
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">
@@ -2351,7 +2467,7 @@ export default function BatchDetailPage() {
               </div>
 
               {/* Warning if already pushed to this campaign */}
-              {selectedOutreachCampaign && pushingCompanyId &&
+              {selectedOutreachCampaign && !isPushAllMode && pushingCompanyId &&
                 companies.find(c => c.id === pushingCompanyId)?.pushed_to_campaigns?.includes(selectedOutreachCampaign) && (
                   <div className="flex items-center gap-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400">
                     <AlertTriangle className="h-4 w-4 flex-shrink-0" />
@@ -2360,6 +2476,30 @@ export default function BatchDetailPage() {
                     </p>
                   </div>
                 )}
+
+              {/* Bulk push info */}
+              {selectedOutreachCampaign && isPushAllMode && (() => {
+                const alreadyPushed = filteredCompanies.filter(c => (c.pushed_to_campaigns || []).includes(selectedOutreachCampaign)).length;
+                const toPush = filteredCompanies.length - alreadyPushed;
+                return (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2 p-3 rounded-lg bg-blue-500/10 border border-blue-500/30 text-blue-600 dark:text-blue-400">
+                      <p className="text-sm">
+                        <strong>{toPush}</strong> {toPush === 1 ? 'company' : 'companies'} will be pushed.
+                        {alreadyPushed > 0 && ` ${alreadyPushed} already pushed (will be skipped).`}
+                      </p>
+                    </div>
+                    {isBulkPushing && (
+                      <div className="flex items-center gap-2 p-3 rounded-lg bg-muted">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <p className="text-sm">
+                          Pushing {bulkPushProgress.current}/{bulkPushProgress.total}... ({bulkPushProgress.created} contacts created)
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               {selectedOutreachCampaign && outreachCampaignFunnelStages.length > 0 && (
                 <div className="space-y-2">
@@ -2399,15 +2539,31 @@ export default function BatchDetailPage() {
               )}
             </div>
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setIsPushDialogOpen(false)}>
+              <Button type="button" variant="outline" onClick={() => setIsPushDialogOpen(false)} disabled={isBulkPushing}>
                 Cancel
               </Button>
-              <Button
-                onClick={() => pushingCompanyId && handlePushToOutreach(pushingCompanyId)}
-                disabled={!selectedOutreachCampaign || pushingCompanyId === null}
-              >
-                {pushingCompanyId ? "Push to Outreach" : "Pushing..."}
-              </Button>
+              {isPushAllMode ? (
+                <Button
+                  onClick={handlePushAllToOutreach}
+                  disabled={!selectedOutreachCampaign || isBulkPushing}
+                >
+                  {isBulkPushing ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Pushing {bulkPushProgress.current}/{bulkPushProgress.total}
+                    </>
+                  ) : (
+                    `Push All (${filteredCompanies.filter(c => !(c.pushed_to_campaigns || []).includes(selectedOutreachCampaign)).length || filteredCompanies.length})`
+                  )}
+                </Button>
+              ) : (
+                <Button
+                  onClick={() => pushingCompanyId && handlePushToOutreach(pushingCompanyId)}
+                  disabled={!selectedOutreachCampaign || pushingCompanyId === null}
+                >
+                  {pushingCompanyId ? "Push to Outreach" : "Pushing..."}
+                </Button>
+              )}
             </DialogFooter>
           </DialogContent>
         </Dialog>
