@@ -806,22 +806,40 @@ export async function cancelContactFollowUp(pb: PocketBase, contactId: string): 
 // Find contact by email across all outreach campaigns (case-insensitive)
 export async function findContactByEmail(pb: PocketBase, email: string): Promise<Contact | null> {
   const normalizedEmail = email.toLowerCase().trim();
+  console.log(`findContactByEmail: searching for "${normalizedEmail}"`);
+
   try {
-    // Try exact match first
-    return await pb.collection('contacts').getFirstListItem<Contact>(
-      pb.filter('email = {:email}', { email: normalizedEmail }),
-      { expand: 'company,campaign', sort: '-created' }
-    );
-  } catch {
-    // Fallback: case-insensitive search using ~ operator
-    try {
-      return await pb.collection('contacts').getFirstListItem<Contact>(
-        pb.filter('email ~ {:email}', { email: normalizedEmail }),
-        { expand: 'company,campaign', sort: '-created' }
-      );
-    } catch {
-      return null;
+    // Try exact match first using getList (doesn't throw on empty results)
+    const exactResult = await pb.collection('contacts').getList<Contact>(1, 1, {
+      filter: pb.filter('email = {:email}', { email: normalizedEmail }),
+      expand: 'company,campaign',
+      sort: '-created',
+    });
+
+    if (exactResult.items.length > 0) {
+      console.log(`findContactByEmail: found exact match — contact ${exactResult.items[0].id} (${exactResult.items[0].email})`);
+      return exactResult.items[0];
     }
+
+    console.log(`findContactByEmail: no exact match, trying case-insensitive search...`);
+
+    // Fallback: case-insensitive search using ~ operator
+    const fuzzyResult = await pb.collection('contacts').getList<Contact>(1, 1, {
+      filter: pb.filter('email ~ {:email}', { email: normalizedEmail }),
+      expand: 'company,campaign',
+      sort: '-created',
+    });
+
+    if (fuzzyResult.items.length > 0) {
+      console.log(`findContactByEmail: found fuzzy match — contact ${fuzzyResult.items[0].id} (${fuzzyResult.items[0].email})`);
+      return fuzzyResult.items[0];
+    }
+
+    console.log(`findContactByEmail: no contact found for "${normalizedEmail}"`);
+    return null;
+  } catch (error) {
+    console.error(`findContactByEmail: error searching for "${normalizedEmail}":`, error);
+    return null;
   }
 }
 
