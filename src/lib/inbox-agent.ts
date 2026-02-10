@@ -30,6 +30,7 @@ Follow-up date rules:
 - If the person sends a generic auto-reply (not OOO), set the follow-up to 7 days from today.
 - If the person actually replied to the email (a real human response), do NOT set a follow-up — mark them as replied instead.
 - Never set a follow-up date in the past. If the extracted date is in the past, use 3 days from today.
+- IMPORTANT: Never set a follow-up date on a weekend (Saturday or Sunday). If the calculated date falls on a weekend, move it to the following Monday.
 `;
 
 const AGENT_SYSTEM_PROMPT = `You are an AI email inbox agent for a CRM outreach system. You analyze incoming emails and take appropriate actions.
@@ -385,6 +386,14 @@ async function runAgent(
               // Default to 3 days from now
               followUpDate = new Date();
               followUpDate.setDate(followUpDate.getDate() + 3);
+            }
+
+            // Never schedule follow-ups on weekends — bump to Monday
+            const dayOfWeek = followUpDate.getDay();
+            if (dayOfWeek === 0) { // Sunday → Monday
+              followUpDate.setDate(followUpDate.getDate() + 1);
+            } else if (dayOfWeek === 6) { // Saturday → Monday
+              followUpDate.setDate(followUpDate.getDate() + 2);
             }
 
             const isoDate = followUpDate.toISOString();

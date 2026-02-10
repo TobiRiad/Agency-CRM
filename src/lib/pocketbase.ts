@@ -353,6 +353,9 @@ export async function createContact(pb: PocketBase, data: {
   batch?: string;
   campaign: string;
   created_by?: string;
+  is_primary?: boolean;
+  source_company?: string;
+  source_contact?: string;
 }): Promise<Contact> {
   // Create the contact
   const contact = await pb.collection('contacts').create<Contact>(data);
@@ -995,9 +998,43 @@ export async function pushCompanyToOutreach(
 
   const createdContacts: Contact[] = [];
 
+  // Find or create the company in the outreach campaign so the name carries over
+  let outreachCompanyId = '';
+  try {
+    // Check if company already exists in the outreach campaign (by name)
+    const existingCompany = await pb.collection('companies').getList<Company>(1, 1, {
+      filter: pb.filter('campaign = {:campaignId} && name = {:name}', {
+        campaignId: outreachCampaignId,
+        name: leadCompany.name,
+      }),
+    });
+
+    if (existingCompany.items.length > 0) {
+      outreachCompanyId = existingCompany.items[0].id;
+    } else {
+      // Create the company in the outreach campaign
+      const newOutreachCompany = await pb.collection('companies').create<Company>({
+        name: leadCompany.name,
+        website: leadCompany.website,
+        industry: leadCompany.industry,
+        campaign: outreachCampaignId,
+        batch: batchId || undefined,
+      });
+      outreachCompanyId = newOutreachCompany.id;
+    }
+  } catch (e) {
+    console.error('Failed to create/find outreach company:', e);
+    // Continue without company — contacts will still be created
+  }
+
   if (leadContacts.items.length > 0) {
-    // Push each person as a contact in the outreach campaign
-    for (const leadContact of leadContacts.items) {
+    // Determine which contacts to push
+    const hasPrimary = leadContacts.items.some(c => c.is_primary === true);
+    const contactsToPush = hasPrimary
+      ? leadContacts.items.filter(c => c.is_primary === true) // Only push primary contacts
+      : leadContacts.items; // Backward compat: no primary set, push all
+
+    for (const leadContact of contactsToPush) {
       // Check if contact already exists in outreach campaign
       const existing = await pb.collection('contacts').getList(1, 1, {
         filter: pb.filter('campaign = {:campaignId} && email = {:email}', {
@@ -1009,7 +1046,7 @@ export async function pushCompanyToOutreach(
       if (existing.items.length === 0) {
         const outreachContact = await pb.collection('contacts').create<Contact>({
           campaign: outreachCampaignId,
-          company: '', // No company in outreach
+          company: outreachCompanyId || undefined,
           email: leadContact.email,
           first_name: leadContact.first_name,
           last_name: leadContact.last_name,
@@ -1017,6 +1054,7 @@ export async function pushCompanyToOutreach(
           source_company: leadCompanyId,
           source_contact: leadContact.id,
           batch: batchId || undefined,
+          is_primary: true, // Contacts pushed to outreach are always primary there
         });
         createdContacts.push(outreachContact);
 
@@ -1039,13 +1077,14 @@ export async function pushCompanyToOutreach(
       if (existing.items.length === 0) {
         const outreachContact = await pb.collection('contacts').create<Contact>({
           campaign: outreachCampaignId,
-          company: '',
+          company: outreachCompanyId || undefined,
           email: leadCompany.email,
           first_name: leadCompany.name,
           last_name: '',
           title: '',
           source_company: leadCompanyId,
           batch: batchId || undefined,
+          is_primary: true,
         });
         createdContacts.push(outreachContact);
 

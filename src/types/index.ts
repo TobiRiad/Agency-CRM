@@ -148,6 +148,8 @@ export interface Contact extends BaseRecord {
   follow_up_date?: string; // ISO date string - when to send the next follow-up
   follow_up_template?: string; // Relation ID to email_templates
   follow_up_cancelled?: boolean; // Set to true when contact replies (stops all follow-ups)
+  // Primary contact selection
+  is_primary?: boolean; // True = primary contact to email; false = secondary/alternative
   // Expanded relations
   expand?: {
     company?: Company;

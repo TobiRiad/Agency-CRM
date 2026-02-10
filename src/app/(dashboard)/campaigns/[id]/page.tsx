@@ -148,6 +148,7 @@ export default function CampaignPage() {
     first_name: string;
     last_name: string;
     title: string;
+    is_primary: boolean;
   }>>([]);
   const [newPersonInput, setNewPersonInput] = useState({
     email: "",
@@ -185,10 +186,16 @@ export default function CampaignPage() {
     last_name: string;
     position: string;
     confidence: number;
+    seniority?: string;
+    department?: string;
   }>>([]);
   const [selectedHunterPeople, setSelectedHunterPeople] = useState<Set<string>>(new Set());
   const [isSearchingHunter, setIsSearchingHunter] = useState(false);
   const [hunterSearched, setHunterSearched] = useState(false);
+  // AI primary contact suggestion
+  const [aiPrimaryEmail, setAiPrimaryEmail] = useState<string | null>(null);
+  const [aiPrimaryReason, setAiPrimaryReason] = useState<string>("");
+  const [isPickingPrimary, setIsPickingPrimary] = useState(false);
 
   // Leads-specific state
   const [companyContacts, setCompanyContacts] = useState<Map<string, Contact[]>>(new Map());
@@ -398,6 +405,8 @@ export default function CampaignPage() {
     setIsSearchingHunter(true);
     setHunterPeople([]);
     setSelectedHunterPeople(new Set());
+    setAiPrimaryEmail(null);
+    setAiPrimaryReason("");
 
     try {
       const response = await fetch('/api/hunter/domain-search', {
@@ -411,8 +420,44 @@ export default function CampaignPage() {
         setHunterPeople(data.people);
         toast({
           title: "People Found",
-          description: `Found ${data.people.length} people at ${data.domain}`,
+          description: `Found ${data.people.length} people at ${data.domain}. AI is picking the best contact...`,
         });
+
+        // Auto-trigger AI primary contact selection
+        if (data.people.length > 1) {
+          setIsPickingPrimary(true);
+          try {
+            // Get the active scoring config's system prompt for context
+            const scoringPrompt = aiConfigs.length > 0 ? aiConfigs[0].system_prompt : undefined;
+            const aiResponse = await fetch('/api/ai/pick-primary-contact', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                people: data.people,
+                scoringPrompt,
+                companyName: newCompany.name || data.domain,
+              }),
+            });
+            const aiData = await aiResponse.json();
+            if (aiData.success && aiData.primaryEmail) {
+              setAiPrimaryEmail(aiData.primaryEmail);
+              setAiPrimaryReason(aiData.reasoning || "");
+              // Auto-select all people, with AI pick marked
+              setSelectedHunterPeople(new Set(data.people.map((p: { email: string }) => p.email)));
+            }
+          } catch (aiError) {
+            console.error("AI primary pick error:", aiError);
+            // Still show results, just without AI recommendation
+            setSelectedHunterPeople(new Set(data.people.map((p: { email: string }) => p.email)));
+          } finally {
+            setIsPickingPrimary(false);
+          }
+        } else {
+          // Only one person — auto-select and mark as primary
+          setAiPrimaryEmail(data.people[0].email);
+          setAiPrimaryReason("Only one contact found — automatically selected as primary.");
+          setSelectedHunterPeople(new Set([data.people[0].email]));
+        }
       } else if (data.success) {
         toast({
           title: "No People Found",
@@ -448,13 +493,23 @@ export default function CampaignPage() {
       first_name: p.first_name,
       last_name: p.last_name,
       title: p.position,
+      is_primary: aiPrimaryEmail ? p.email.toLowerCase() === aiPrimaryEmail.toLowerCase() : false,
     }));
+    // If no AI pick and only one person, mark them as primary
+    if (!aiPrimaryEmail && newPeople.length === 1) {
+      newPeople[0].is_primary = true;
+    }
     setNewCompanyPeople([...newCompanyPeople, ...newPeople]);
     setHunterPeople([]);
     setSelectedHunterPeople(new Set());
+    setAiPrimaryEmail(null);
+    setAiPrimaryReason("");
+    const primaryName = newPeople.find(p => p.is_primary);
     toast({
       title: "People Added",
-      description: `Added ${newPeople.length} people to the company`,
+      description: primaryName
+        ? `Added ${newPeople.length} people. Primary: ${primaryName.first_name} ${primaryName.last_name}`.trim()
+        : `Added ${newPeople.length} people to the company`,
     });
   };
 
@@ -684,6 +739,7 @@ export default function CampaignPage() {
               company: newCompanyRecord.id,
               campaign: campaignId,
               created_by: currentUser?.id,
+              is_primary: person.is_primary,
             });
             peopleCreated++;
           } catch (err) {
@@ -714,6 +770,11 @@ export default function CampaignPage() {
       setMapResult(null);
       setManualUrls({});
       setShowUrlPreview(false);
+      setHunterPeople([]);
+      setHunterSearched(false);
+      setSelectedHunterPeople(new Set());
+      setAiPrimaryEmail(null);
+      setAiPrimaryReason("");
       setIsAddCompanyOpen(false);
       loadData();
     } catch (error) {
@@ -739,15 +800,22 @@ export default function CampaignPage() {
       setDuplicateCompany(null);
       setNewCompanyPeople([]);
       setNewPersonInput({ email: "", first_name: "", last_name: "", title: "" });
+      setHunterPeople([]);
+      setHunterSearched(false);
+      setSelectedHunterPeople(new Set());
+      setAiPrimaryEmail(null);
+      setAiPrimaryReason("");
     }
   };
 
   // Add person to the list (for new company)
   const handleAddPersonToList = () => {
     if (!newPersonInput.email.trim()) return;
+    // If this is the first person being added, mark them as primary
+    const isPrimary = newCompanyPeople.length === 0 || !newCompanyPeople.some(p => p.is_primary);
     setNewCompanyPeople([
       ...newCompanyPeople,
-      { ...newPersonInput, id: crypto.randomUUID() },
+      { ...newPersonInput, id: crypto.randomUUID(), is_primary: isPrimary },
     ]);
     setNewPersonInput({ email: "", first_name: "", last_name: "", title: "" });
   };
@@ -1536,39 +1604,78 @@ export default function CampaignPage() {
                             </Button>
                           </div>
 
-                          {hunterPeople.length > 0 && (
+                          {isPickingPrimary && (
+                            <div className="flex items-center gap-2 p-3 rounded-lg bg-muted/50 text-sm text-muted-foreground">
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              <span>AI is analyzing contacts to pick the best person to email...</span>
+                            </div>
+                          )}
+
+                          {hunterPeople.length > 0 && !isPickingPrimary && (
                             <div className="space-y-2">
-                              <div className="max-h-48 overflow-y-auto border rounded-lg divide-y">
-                                {hunterPeople.map((person) => (
-                                  <div key={person.email} className="flex items-center gap-3 p-2 hover:bg-muted/50">
-                                    <Checkbox
-                                      checked={selectedHunterPeople.has(person.email)}
-                                      onCheckedChange={(checked) => {
-                                        const newSet = new Set(selectedHunterPeople);
-                                        if (checked) { newSet.add(person.email); } else { newSet.delete(person.email); }
-                                        setSelectedHunterPeople(newSet);
-                                      }}
-                                    />
-                                    <div className="flex-1 min-w-0">
-                                      <p className="text-sm font-medium truncate">
-                                        {person.first_name} {person.last_name}
-                                        {person.position && <span className="text-muted-foreground"> · {person.position}</span>}
-                                      </p>
-                                      <p className="text-xs text-muted-foreground truncate">{person.email}</p>
+                              {aiPrimaryReason && (
+                                <div className="flex items-start gap-2 p-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-xs">
+                                  <Sparkles className="h-3.5 w-3.5 text-amber-600 mt-0.5 flex-shrink-0" />
+                                  <span className="text-amber-800 dark:text-amber-200">{aiPrimaryReason}</span>
+                                </div>
+                              )}
+                              <div className="max-h-56 overflow-y-auto border rounded-lg divide-y">
+                                {hunterPeople.map((person) => {
+                                  const isPrimary = aiPrimaryEmail?.toLowerCase() === person.email.toLowerCase();
+                                  return (
+                                    <div key={person.email} className={`flex items-center gap-3 p-2 hover:bg-muted/50 ${isPrimary ? 'bg-amber-50/50 dark:bg-amber-950/20' : ''}`}>
+                                      <Checkbox
+                                        checked={selectedHunterPeople.has(person.email)}
+                                        onCheckedChange={(checked) => {
+                                          const newSet = new Set(selectedHunterPeople);
+                                          if (checked) { newSet.add(person.email); } else { newSet.delete(person.email); }
+                                          setSelectedHunterPeople(newSet);
+                                        }}
+                                      />
+                                      <div className="flex-1 min-w-0">
+                                        <p className="text-sm font-medium truncate">
+                                          {person.first_name} {person.last_name}
+                                          {person.position && <span className="text-muted-foreground"> · {person.position}</span>}
+                                        </p>
+                                        <p className="text-xs text-muted-foreground truncate">{person.email}</p>
+                                      </div>
+                                      <div className="flex items-center gap-1.5 flex-shrink-0">
+                                        {isPrimary ? (
+                                          <Badge className="text-xs bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200 border-amber-300 dark:border-amber-700">
+                                            <Star className="h-3 w-3 mr-1 fill-current" />Primary
+                                          </Badge>
+                                        ) : (
+                                          <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="sm"
+                                            className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground"
+                                            onClick={() => {
+                                              setAiPrimaryEmail(person.email);
+                                              setAiPrimaryReason(`Manually selected ${person.first_name} ${person.last_name} as primary contact.`);
+                                            }}
+                                          >
+                                            Set Primary
+                                          </Button>
+                                        )}
+                                        <Badge variant="outline" className="text-xs">{person.confidence}%</Badge>
+                                      </div>
                                     </div>
-                                    <Badge variant="outline" className="text-xs">{person.confidence}%</Badge>
-                                  </div>
-                                ))}
+                                  );
+                                })}
                               </div>
                               <div className="flex items-center justify-between">
-                                <span className="text-xs text-muted-foreground">{selectedHunterPeople.size} selected</span>
+                                <span className="text-xs text-muted-foreground">
+                                  {selectedHunterPeople.size} selected
+                                  {aiPrimaryEmail && ` · Primary: ${hunterPeople.find(p => p.email.toLowerCase() === aiPrimaryEmail.toLowerCase())?.first_name || aiPrimaryEmail}`}
+                                </span>
                                 <Button
                                   type="button"
                                   size="sm"
                                   onClick={handleAddHunterPeople}
                                   disabled={selectedHunterPeople.size === 0}
                                 >
-                                  Add Selected
+                                  Add All Contacts
                                 </Button>
                               </div>
                             </div>
@@ -1596,13 +1703,18 @@ export default function CampaignPage() {
                         {/* List of added people */}
                         {newCompanyPeople.length > 0 && (
                           <div className="space-y-2">
-                            {newCompanyPeople.map((person) => (
+                            {/* Sort primary first */}
+                            {[...newCompanyPeople].sort((a, b) => (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0)).map((person) => (
                               <div
                                 key={person.id}
-                                className="flex items-center justify-between p-2 rounded-md bg-muted/50 text-sm"
+                                className={`flex items-center justify-between p-2 rounded-md text-sm ${person.is_primary ? 'bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800' : 'bg-muted/50'}`}
                               >
                                 <div className="flex items-center gap-2 min-w-0">
-                                  <Users className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                                  {person.is_primary ? (
+                                    <Star className="h-3.5 w-3.5 text-amber-600 fill-amber-600 flex-shrink-0" />
+                                  ) : (
+                                    <Users className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                                  )}
                                   <span className="truncate">
                                     {person.first_name || person.last_name
                                       ? `${person.first_name} ${person.last_name}`.trim()
@@ -1618,16 +1730,38 @@ export default function CampaignPage() {
                                       · {person.title}
                                     </span>
                                   )}
+                                  {person.is_primary && (
+                                    <Badge className="text-xs bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200 border-amber-300 dark:border-amber-700 ml-1">
+                                      Primary
+                                    </Badge>
+                                  )}
                                 </div>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-6 w-6 text-destructive hover:text-destructive flex-shrink-0"
-                                  onClick={() => handleRemovePersonFromList(person.id)}
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </Button>
+                                <div className="flex items-center gap-1 flex-shrink-0">
+                                  {!person.is_primary && newCompanyPeople.length > 1 && (
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground"
+                                      onClick={() => {
+                                        setNewCompanyPeople(prev =>
+                                          prev.map(p => ({ ...p, is_primary: p.id === person.id }))
+                                        );
+                                      }}
+                                    >
+                                      Set Primary
+                                    </Button>
+                                  )}
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-6 w-6 text-destructive hover:text-destructive"
+                                    onClick={() => handleRemovePersonFromList(person.id)}
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </Button>
+                                </div>
                               </div>
                             ))}
                           </div>
