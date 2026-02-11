@@ -111,6 +111,7 @@ export default function CampaignPage() {
   const [contactStageMap, setContactStageMap] = useState<Map<string, string>>(new Map());
   const [batches, setBatches] = useState<Batch[]>([]);
   const [selectedContacts, setSelectedContacts] = useState<Set<string>>(new Set());
+  const [editingFollowUpId, setEditingFollowUpId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [stageFilter, setStageFilter] = useState<string>("all");
@@ -1248,6 +1249,80 @@ export default function CampaignPage() {
         description: "Failed to update contact stage.",
         variant: "destructive",
       });
+    }
+  };
+
+  // Bulk set funnel stage for all selected contacts
+  const [isBulkUpdating, setIsBulkUpdating] = useState(false);
+
+  const handleBulkStageChange = async (stageId: string) => {
+    if (!stageId || selectedContacts.size === 0) return;
+    setIsBulkUpdating(true);
+    try {
+      const pb = getClientPB();
+      const newStageMap = new Map(contactStageMap);
+      for (const contactId of selectedContacts) {
+        await setContactStage(pb, contactId, stageId);
+        newStageMap.set(contactId, stageId);
+      }
+      setContactStageMap(newStageMap);
+      toast({
+        title: "Bulk stage update",
+        description: `Updated ${selectedContacts.size} contact(s) to "${funnelStages.find(s => s.id === stageId)?.name}".`,
+      });
+    } catch (error) {
+      console.error("Bulk stage change failed:", error);
+      toast({ title: "Error", description: "Some contacts may not have been updated.", variant: "destructive" });
+    } finally {
+      setIsBulkUpdating(false);
+    }
+  };
+
+  // Bulk set follow-up date for all selected contacts
+  const handleBulkFollowUpDate = async (date: string) => {
+    if (!date || selectedContacts.size === 0) return;
+    setIsBulkUpdating(true);
+    try {
+      const pb = getClientPB();
+      const isoDate = new Date(date).toISOString();
+      for (const contactId of selectedContacts) {
+        await updateContact(pb, contactId, {
+          follow_up_date: isoDate,
+          follow_up_cancelled: false,
+        });
+      }
+      toast({
+        title: "Bulk follow-up update",
+        description: `Set follow-up date for ${selectedContacts.size} contact(s).`,
+      });
+      loadData();
+    } catch (error) {
+      console.error("Bulk follow-up set failed:", error);
+      toast({ title: "Error", description: "Some follow-up dates may not have been set.", variant: "destructive" });
+    } finally {
+      setIsBulkUpdating(false);
+    }
+  };
+
+  // Inline follow-up date edit for a single contact
+  const handleInlineFollowUpChange = async (contactId: string, date: string) => {
+    setEditingFollowUpId(null);
+    try {
+      const pb = getClientPB();
+      await updateContact(pb, contactId, {
+        follow_up_date: date ? new Date(date).toISOString() : "",
+        follow_up_cancelled: false,
+      });
+      // Update local state without full reload
+      setContacts(prev => prev.map(c =>
+        c.id === contactId
+          ? { ...c, follow_up_date: date ? new Date(date).toISOString() : "", follow_up_cancelled: false }
+          : c
+      ));
+      toast({ title: "Follow-up updated", description: date ? `Set to ${new Date(date).toLocaleDateString()}` : "Follow-up cleared" });
+    } catch (error) {
+      console.error("Failed to update follow-up:", error);
+      toast({ title: "Error", description: "Failed to update follow-up date.", variant: "destructive" });
     }
   };
 
@@ -2827,6 +2902,39 @@ export default function CampaignPage() {
                       Follow-up {selectedContacts.size} selected
                     </Link>
                   </Button>
+                  {/* Bulk set funnel stage */}
+                  <Select
+                    onValueChange={handleBulkStageChange}
+                    disabled={isBulkUpdating}
+                  >
+                    <SelectTrigger className="w-[170px] h-9 text-sm">
+                      <SelectValue placeholder={isBulkUpdating ? "Updating..." : "Set Stage..."} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {funnelStages.map((stage) => (
+                        <SelectItem key={stage.id} value={stage.id}>
+                          <span className="flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: stage.color || '#6b7280' }} />
+                            {stage.name}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {/* Bulk set follow-up date */}
+                  <div className="flex items-center gap-1">
+                    <Input
+                      type="date"
+                      className="h-9 w-[150px] text-sm"
+                      disabled={isBulkUpdating}
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          handleBulkFollowUpDate(e.target.value);
+                          e.target.value = "";
+                        }
+                      }}
+                    />
+                  </div>
                 </>
               )}
               <Button variant="outline" asChild>
@@ -3404,24 +3512,52 @@ export default function CampaignPage() {
                       )}
                       {(campaign?.kind === 'outreach' || !campaign?.kind) && (
                         <TableCell>
-                          {contact.follow_up_date ? (
-                            <div className="flex items-center gap-1.5 text-sm">
-                              <CalendarClock className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-                              <span className={
-                                new Date(contact.follow_up_date) < new Date()
-                                  ? "text-red-500 font-medium"
-                                  : new Date(contact.follow_up_date).toDateString() === new Date().toDateString()
-                                    ? "text-orange-500 font-medium"
-                                    : ""
-                              }>
-                                {new Date(contact.follow_up_date).toLocaleDateString()}
-                              </span>
-                              {contact.follow_up_cancelled && (
-                                <Badge variant="outline" className="text-xs px-1 py-0">Cancelled</Badge>
+                          {editingFollowUpId === contact.id ? (
+                            <Input
+                              type="date"
+                              className="h-8 w-[140px] text-sm"
+                              defaultValue={contact.follow_up_date ? contact.follow_up_date.substring(0, 10) : ""}
+                              autoFocus
+                              onBlur={(e) => {
+                                if (e.target.value !== (contact.follow_up_date ? contact.follow_up_date.substring(0, 10) : "")) {
+                                  handleInlineFollowUpChange(contact.id, e.target.value);
+                                } else {
+                                  setEditingFollowUpId(null);
+                                }
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  handleInlineFollowUpChange(contact.id, (e.target as HTMLInputElement).value);
+                                } else if (e.key === "Escape") {
+                                  setEditingFollowUpId(null);
+                                }
+                              }}
+                            />
+                          ) : (
+                            <div
+                              className="cursor-pointer hover:bg-muted/50 rounded px-1.5 py-1 -mx-1.5 -my-1 transition-colors"
+                              onClick={() => setEditingFollowUpId(contact.id)}
+                            >
+                              {contact.follow_up_date ? (
+                                <div className="flex items-center gap-1.5 text-sm">
+                                  <CalendarClock className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                                  <span className={
+                                    new Date(contact.follow_up_date) < new Date()
+                                      ? "text-red-500 font-medium"
+                                      : new Date(contact.follow_up_date).toDateString() === new Date().toDateString()
+                                        ? "text-orange-500 font-medium"
+                                        : ""
+                                  }>
+                                    {new Date(contact.follow_up_date).toLocaleDateString()}
+                                  </span>
+                                  {contact.follow_up_cancelled && (
+                                    <Badge variant="outline" className="text-xs px-1 py-0">Cancelled</Badge>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="text-muted-foreground text-sm">+ Set date</span>
                               )}
                             </div>
-                          ) : (
-                            <span className="text-muted-foreground">-</span>
                           )}
                         </TableCell>
                       )}
