@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { sendEmail } from "@/lib/resend";
 import { sendGmail, GmailConfig } from "@/lib/gmail";
 import { getServerAdminPB, getServerPB, createEmailSend } from "@/lib/pocketbase";
-import { getUnsubscribeUrl } from "@/app/api/unsubscribe/route";
+import { getUnsubscribeUrl } from "@/lib/unsubscribe";
 
 type EmailProvider = "resend" | "gmail";
 
