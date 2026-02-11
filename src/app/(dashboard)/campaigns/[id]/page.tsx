@@ -1285,7 +1285,7 @@ export default function CampaignPage() {
     setIsBulkUpdating(true);
     try {
       const pb = getClientPB();
-      const isoDate = new Date(date).toISOString();
+      const isoDate = date + " 12:00:00.000Z";
       const contactIds = Array.from(selectedContacts);
       for (let i = 0; i < contactIds.length; i++) {
         await updateContact(pb, contactIds[i], {
@@ -1311,14 +1311,15 @@ export default function CampaignPage() {
     setEditingFollowUpId(null);
     try {
       const pb = getClientPB();
+      const isoDate = date ? date + " 12:00:00.000Z" : "";
       await updateContact(pb, contactId, {
-        follow_up_date: date ? new Date(date).toISOString() : "",
+        follow_up_date: isoDate,
         follow_up_cancelled: false,
       });
       // Update local state without full reload
       setContacts(prev => prev.map(c =>
         c.id === contactId
-          ? { ...c, follow_up_date: date ? new Date(date).toISOString() : "", follow_up_cancelled: false }
+          ? { ...c, follow_up_date: isoDate, follow_up_cancelled: false }
           : c
       ));
       toast({ title: "Follow-up updated", description: date ? `Set to ${new Date(date).toLocaleDateString()}` : "Follow-up cleared" });
