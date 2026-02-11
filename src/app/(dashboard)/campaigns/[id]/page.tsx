@@ -1261,9 +1261,10 @@ export default function CampaignPage() {
     try {
       const pb = getClientPB();
       const newStageMap = new Map(contactStageMap);
-      for (const contactId of selectedContacts) {
-        await setContactStage(pb, contactId, stageId);
-        newStageMap.set(contactId, stageId);
+      const contactIds = Array.from(selectedContacts);
+      for (let i = 0; i < contactIds.length; i++) {
+        await setContactStage(pb, contactIds[i], stageId);
+        newStageMap.set(contactIds[i], stageId);
       }
       setContactStageMap(newStageMap);
       toast({
@@ -1285,8 +1286,9 @@ export default function CampaignPage() {
     try {
       const pb = getClientPB();
       const isoDate = new Date(date).toISOString();
-      for (const contactId of selectedContacts) {
-        await updateContact(pb, contactId, {
+      const contactIds = Array.from(selectedContacts);
+      for (let i = 0; i < contactIds.length; i++) {
+        await updateContact(pb, contactIds[i], {
           follow_up_date: isoDate,
           follow_up_cancelled: false,
         });
