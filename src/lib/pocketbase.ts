@@ -817,7 +817,7 @@ export async function getContactsDueForFollowUp(pb: PocketBase): Promise<Contact
   const now = new Date().toISOString();
   const result = await pb.collection('contacts').getList<Contact>(1, 200, {
     filter: pb.filter(
-      'follow_up_date != "" && follow_up_date <= {:now} && follow_up_cancelled != true',
+      'follow_up_date != "" && follow_up_date <= {:now} && follow_up_cancelled != true && unsubscribed != true',
       { now }
     ),
     expand: 'company,campaign,follow_up_template',
@@ -870,9 +870,10 @@ export async function findContactByEmail(pb: PocketBase, email: string): Promise
 
     console.log(`findContactByEmail: using token: ${token ? token.substring(0, 20) + '...' : 'NONE'}`);
 
-    // Try filtered query first
-    const filterParam = encodeURIComponent(`email="${normalizedEmail}"`);
-    const filteredUrl = `${baseUrl}/api/collections/contacts/records?filter=${filterParam}&perPage=1`;
+    // Only match contacts in outreach campaigns (the inbox agent only deals with outreach emails)
+    // Note: outreach campaigns may have kind="outreach" or kind="" (empty = outreach, legacy)
+    const filterParam = encodeURIComponent(`email="${normalizedEmail}" && (campaign.kind="outreach" || campaign.kind="")`);
+    const filteredUrl = `${baseUrl}/api/collections/contacts/records?filter=${filterParam}&perPage=1&expand=campaign`;
 
     console.log(`findContactByEmail: trying filtered query: ${filteredUrl}`);
 
@@ -883,33 +884,43 @@ export async function findContactByEmail(pb: PocketBase, email: string): Promise
     if (filteredRes.ok) {
       const data = await filteredRes.json();
       if (data.items && data.items.length > 0) {
-        console.log(`findContactByEmail: found contact ${data.items[0].id} (${data.items[0].email})`);
+        console.log(`findContactByEmail: found outreach contact ${data.items[0].id} (${data.items[0].email}) in campaign "${data.items[0].expand?.campaign?.name || 'unknown'}"`);
         return data.items[0] as Contact;
       }
     } else {
       console.log(`findContactByEmail: filtered query returned ${filteredRes.status}`);
     }
 
-    // Fallback: fetch all contacts and search in memory
-    console.log('findContactByEmail: trying unfiltered fetch...');
-    const allUrl = `${baseUrl}/api/collections/contacts/records?perPage=500`;
+    // Fallback: fetch contacts with expand and filter in memory
+    // (in case the relation filter syntax isn't supported)
+    console.log('findContactByEmail: trying unfiltered fetch with expand...');
+    const emailOnlyFilter = encodeURIComponent(`email="${normalizedEmail}"`);
+    const allUrl = `${baseUrl}/api/collections/contacts/records?filter=${emailOnlyFilter}&perPage=50&expand=campaign`;
     const allRes = await fetch(allUrl, {
       headers: token ? { 'Authorization': token } : {},
     });
 
     if (allRes.ok) {
       const data = await allRes.json();
-      console.log(`findContactByEmail: fetched ${data.items?.length || 0} contacts`);
-      const match = (data.items || []).find(
-        (c: Contact) => c.email?.toLowerCase().trim() === normalizedEmail
+      console.log(`findContactByEmail: fetched ${data.items?.length || 0} contacts matching email`);
+      
+      // Prefer outreach campaign contacts (kind="outreach" or kind="" which is legacy outreach)
+      const outreachMatch = (data.items || []).find(
+        (c: Contact) => c.expand?.campaign?.kind === 'outreach' || !c.expand?.campaign?.kind
       );
-      if (match) {
-        console.log(`findContactByEmail: found via in-memory search — contact ${match.id} (${match.email})`);
-        return match as Contact;
+      if (outreachMatch) {
+        console.log(`findContactByEmail: found outreach contact via fallback — ${outreachMatch.id} in campaign "${outreachMatch.expand?.campaign?.name}"`);
+        return outreachMatch as Contact;
+      }
+
+      // If no outreach match, return any match (backwards compatibility)
+      if (data.items && data.items.length > 0) {
+        console.log(`findContactByEmail: no outreach match, returning first match ${data.items[0].id}`);
+        return data.items[0] as Contact;
       }
     } else {
       const errText = await allRes.text();
-      console.error(`findContactByEmail: unfiltered query returned ${allRes.status}: ${errText}`);
+      console.error(`findContactByEmail: fallback query returned ${allRes.status}: ${errText}`);
     }
 
     console.log(`findContactByEmail: no contact found for "${normalizedEmail}"`);

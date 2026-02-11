@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { sendEmail } from "@/lib/resend";
 import { sendGmail, GmailConfig } from "@/lib/gmail";
 import { getServerAdminPB, getServerPB, createEmailSend } from "@/lib/pocketbase";
+import { getUnsubscribeUrl } from "@/app/api/unsubscribe/route";
 
 type EmailProvider = "resend" | "gmail";
 
@@ -100,6 +101,11 @@ export async function POST(request: NextRequest) {
 
     // Get email provider settings
     const { provider, gmailEmail, senderName } = await getEmailProviderSettings();
+
+    // Generate unsubscribe URL and inject footer into HTML
+    const unsubscribeUrl = getUnsubscribeUrl(contactId);
+    const unsubscribeFooter = `<div style="margin-top:20px;padding-top:10px;border-top:1px solid #eee;font-size:11px;color:#999;text-align:center;"><a href="${unsubscribeUrl}" style="color:#999;text-decoration:underline;">Unsubscribe</a></div>`;
+    const htmlWithUnsub = html + unsubscribeFooter;
     
     let result: { success: boolean; id?: string; threadId?: string; error?: string };
 
@@ -118,7 +124,7 @@ export async function POST(request: NextRequest) {
         {
           to,
           subject,
-          html,
+          html: htmlWithUnsub,
           from:
             from ||
             `${(senderName || gmailEmail.split("@")[0]).trim()} <${gmailEmail}>`,
@@ -129,6 +135,8 @@ export async function POST(request: NextRequest) {
           threadId: threadId || undefined,
           inReplyTo: inReplyTo || undefined,
           references: references || undefined,
+          // Unsubscribe header (Gmail shows native unsubscribe button)
+          listUnsubscribeUrl: unsubscribeUrl,
         },
         gmailConfig
       );
@@ -137,7 +145,7 @@ export async function POST(request: NextRequest) {
       result = await sendEmail({
         to,
         subject,
-        html,
+        html: htmlWithUnsub,
         from: from || "CRM <noreply@yourdomain.com>",
         replyTo,
         tags: [

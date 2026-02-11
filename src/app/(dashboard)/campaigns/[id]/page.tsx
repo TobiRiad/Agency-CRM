@@ -92,7 +92,7 @@ import {
   Pencil,
 } from "lucide-react";
 import type { Campaign, Contact, Company, CustomField, ContactFieldValue, FunnelStage, ContactStage, Batch, AIScoringConfig, FirecrawlPageType, FirecrawlUrls } from "@/types";
-import { Globe, AlertTriangle, Check } from "lucide-react";
+import { Globe, AlertTriangle, Check, CalendarClock, MailX } from "lucide-react";
 
 export default function CampaignPage() {
   const params = useParams();
@@ -3094,6 +3094,9 @@ export default function CampaignPage() {
                   {(campaign?.kind === 'outreach' || !campaign?.kind) && (
                     <TableHead>AI Opener</TableHead>
                   )}
+                  {(campaign?.kind === 'outreach' || !campaign?.kind) && (
+                    <TableHead>Follow-up</TableHead>
+                  )}
                   <TableHead>Created By</TableHead>
                   {customFields.map((field) => (
                     <TableHead key={field.id}>{field.name}</TableHead>
@@ -3105,7 +3108,7 @@ export default function CampaignPage() {
                 {filteredContacts.length === 0 ? (
                   <TableRow>
                     <TableCell
-                      colSpan={9 + (campaign?.kind === 'outreach' || !campaign?.kind ? 1 : 0) + customFields.length}
+                      colSpan={9 + (campaign?.kind === 'outreach' || !campaign?.kind ? 2 : 0) + customFields.length}
                       className="text-center py-8 text-muted-foreground"
                     >
                       {searchQuery || stageFilter !== "all"
@@ -3115,7 +3118,7 @@ export default function CampaignPage() {
                   </TableRow>
                 ) : (
                   filteredContacts.map((contact) => (
-                    <TableRow key={contact.id}>
+                    <TableRow key={contact.id} className={contact.unsubscribed ? "opacity-50" : ""}>
                       <TableCell>
                         <Checkbox
                           checked={selectedContacts.has(contact.id)}
@@ -3183,6 +3186,11 @@ export default function CampaignPage() {
                         ) : (
                           <div className="flex items-center gap-2">
                             {contact.first_name} {contact.last_name}
+                            {contact.unsubscribed && (
+                              <Badge variant="outline" className="text-xs px-1.5 py-0 text-red-500 border-red-300">
+                                <MailX className="h-3 w-3 mr-1" />Unsub
+                              </Badge>
+                            )}
                             {campaign?.kind === 'outreach' || !campaign?.kind ? (
                               <Button
                                 size="sm"
@@ -3391,6 +3399,29 @@ export default function CampaignPage() {
                                 </>
                               )}
                             </Button>
+                          )}
+                        </TableCell>
+                      )}
+                      {(campaign?.kind === 'outreach' || !campaign?.kind) && (
+                        <TableCell>
+                          {contact.follow_up_date ? (
+                            <div className="flex items-center gap-1.5 text-sm">
+                              <CalendarClock className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                              <span className={
+                                new Date(contact.follow_up_date) < new Date()
+                                  ? "text-red-500 font-medium"
+                                  : new Date(contact.follow_up_date).toDateString() === new Date().toDateString()
+                                    ? "text-orange-500 font-medium"
+                                    : ""
+                              }>
+                                {new Date(contact.follow_up_date).toLocaleDateString()}
+                              </span>
+                              {contact.follow_up_cancelled && (
+                                <Badge variant="outline" className="text-xs px-1 py-0">Cancelled</Badge>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground">-</span>
                           )}
                         </TableCell>
                       )}

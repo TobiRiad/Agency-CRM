@@ -124,7 +124,9 @@ export default function ContactDetailPage() {
       setCurrentStageId(contactStage?.stage || null);
 
       // Set follow-up state
-      setFollowUpDate(contactData.follow_up_date ? contactData.follow_up_date.split("T")[0] : "");
+      // PocketBase returns dates as "2026-02-22 00:00:00.000Z" (space, not T)
+      // Use substring(0,10) to always get "YYYY-MM-DD" regardless of separator
+      setFollowUpDate(contactData.follow_up_date ? contactData.follow_up_date.substring(0, 10) : "");
       setFollowUpTemplateId(contactData.follow_up_template || "");
       setFollowUpCancelled(contactData.follow_up_cancelled || false);
 

@@ -17,6 +17,8 @@ export interface SendGmailParams {
   threadId?: string; // Gmail thread ID to send in the same thread
   inReplyTo?: string; // Message-ID of the email we're replying to
   references?: string; // Space-separated list of Message-IDs in the thread
+  // Unsubscribe support
+  listUnsubscribeUrl?: string; // URL for List-Unsubscribe header (Gmail shows native unsub button)
 }
 
 export interface SendGmailResult {
@@ -77,6 +79,13 @@ function createEmailMessage(params: SendGmailParams, fromEmail: string): string 
   if (params.references) {
     const insertAt = emailLines.indexOf('MIME-Version: 1.0');
     emailLines.splice(insertAt, 0, `References: ${params.references}`);
+  }
+
+  // List-Unsubscribe headers (Gmail/Outlook show native unsubscribe button)
+  if (params.listUnsubscribeUrl) {
+    const insertAt = emailLines.indexOf('MIME-Version: 1.0');
+    emailLines.splice(insertAt, 0, `List-Unsubscribe: <${params.listUnsubscribeUrl}>`);
+    emailLines.splice(insertAt + 1, 0, `List-Unsubscribe-Post: List-Unsubscribe=One-Click`);
   }
 
   const email = emailLines.join('\r\n');

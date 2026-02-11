@@ -86,7 +86,7 @@ import {
   Copy,
 } from "lucide-react";
 import type { Campaign, Contact, Company, CustomField, ContactFieldValue, FunnelStage, ContactStage, Batch, AIScoringConfig, FirecrawlPageType, FirecrawlUrls } from "@/types";
-import { Globe, AlertTriangle, Check } from "lucide-react";
+import { Globe, AlertTriangle, Check, CalendarClock, MailX } from "lucide-react";
 
 export default function BatchDetailPage() {
   const params = useParams();
@@ -2855,6 +2855,7 @@ export default function BatchDetailPage() {
               <TableHead>Title</TableHead>
               <TableHead>Company</TableHead>
               <TableHead>Funnel Stage</TableHead>
+              <TableHead>Follow-up</TableHead>
               <TableHead>Created By</TableHead>
               {customFields.map((field) => (
                 <TableHead key={field.id}>{field.name}</TableHead>
@@ -2866,7 +2867,7 @@ export default function BatchDetailPage() {
             {filteredContacts.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={8 + customFields.length}
+                  colSpan={9 + customFields.length}
                   className="text-center py-8 text-muted-foreground"
                 >
                   {searchQuery || stageFilter !== "all"
@@ -2876,7 +2877,7 @@ export default function BatchDetailPage() {
               </TableRow>
             ) : (
               filteredContacts.map((contact) => (
-                <TableRow key={contact.id}>
+                <TableRow key={contact.id} className={contact.unsubscribed ? "opacity-50" : ""}>
                   <TableCell>
                     <Checkbox
                       checked={selectedContacts.has(contact.id)}
@@ -2886,12 +2887,19 @@ export default function BatchDetailPage() {
                     />
                   </TableCell>
                   <TableCell className="font-medium">
-                    <Link
-                      href={`/campaigns/${campaignId}/contacts/${contact.id}`}
-                      className="hover:underline"
-                    >
-                      {contact.first_name} {contact.last_name}
-                    </Link>
+                    <div className="flex items-center gap-2">
+                      <Link
+                        href={`/campaigns/${campaignId}/contacts/${contact.id}`}
+                        className="hover:underline"
+                      >
+                        {contact.first_name} {contact.last_name}
+                      </Link>
+                      {contact.unsubscribed && (
+                        <Badge variant="outline" className="text-xs px-1.5 py-0 text-red-500 border-red-300">
+                          <MailX className="h-3 w-3 mr-1" />Unsub
+                        </Badge>
+                      )}
+                    </div>
                   </TableCell>
                   <TableCell>{contact.email}</TableCell>
                   <TableCell>{contact.title || "-"}</TableCell>
@@ -2941,6 +2949,27 @@ export default function BatchDetailPage() {
                         ))}
                       </SelectContent>
                     </Select>
+                  </TableCell>
+                  <TableCell>
+                    {contact.follow_up_date ? (
+                      <div className="flex items-center gap-1.5 text-sm">
+                        <CalendarClock className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                        <span className={
+                          new Date(contact.follow_up_date) < new Date()
+                            ? "text-red-500 font-medium"
+                            : new Date(contact.follow_up_date).toDateString() === new Date().toDateString()
+                              ? "text-orange-500 font-medium"
+                              : ""
+                        }>
+                          {new Date(contact.follow_up_date).toLocaleDateString()}
+                        </span>
+                        {contact.follow_up_cancelled && (
+                          <Badge variant="outline" className="text-xs px-1 py-0">Cancelled</Badge>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground">-</span>
+                    )}
                   </TableCell>
                   <TableCell>
                     {contact.expand?.created_by?.name || contact.expand?.created_by?.email || "-"}

@@ -304,8 +304,8 @@ export default function FollowUpPage() {
         return !EXCLUDED_STAGE_NAMES.includes(stage.name.toLowerCase());
       });
 
-      // Also exclude contacts that are already marked follow_up_cancelled
-      contacts = contacts.filter((c) => !c.follow_up_cancelled);
+      // Also exclude contacts that are already marked follow_up_cancelled or unsubscribed
+      contacts = contacts.filter((c) => !c.follow_up_cancelled && !c.unsubscribed);
     } else if (stageFilter !== "all") {
       // Filter to a specific stage
       contacts = contacts.filter((c) => contactStageMap.get(c.id) === stageFilter);

@@ -150,6 +150,8 @@ export interface Contact extends BaseRecord {
   follow_up_cancelled?: boolean; // Set to true when contact replies (stops all follow-ups)
   // Primary contact selection
   is_primary?: boolean; // True = primary contact to email; false = secondary/alternative
+  // Unsubscribe tracking
+  unsubscribed?: boolean; // True = contact opted out of all emails
   // Expanded relations
   expand?: {
     company?: Company;
