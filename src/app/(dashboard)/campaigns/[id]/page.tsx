@@ -2106,9 +2106,9 @@ export default function CampaignPage() {
         </div>
 
         {/* Leads Companies Table */}
-        <div className="border rounded-lg">
+        <div className="border rounded-lg overflow-auto max-h-[75vh]">
           <Table>
-            <TableHeader>
+            <TableHeader className="sticky top-0 z-10 bg-background shadow-sm">
               <TableRow>
                 <TableHead className="min-w-[140px]">Company</TableHead>
                 <TableHead className="min-w-[140px]">Description</TableHead>
@@ -3183,9 +3183,9 @@ export default function CampaignPage() {
           </div>
 
           {/* Contacts Table */}
-          <div className="border rounded-lg">
+          <div className="border rounded-lg overflow-auto max-h-[75vh]">
             <Table>
-              <TableHeader>
+              <TableHeader className="sticky top-0 z-10 bg-background shadow-sm">
                 <TableRow>
                   <TableHead className="w-12">
                     <Checkbox
