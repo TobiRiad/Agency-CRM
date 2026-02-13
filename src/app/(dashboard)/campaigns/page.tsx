@@ -45,6 +45,7 @@ import { formatDate } from "@/lib/utils";
 
 interface CampaignStats {
   contactCount: number;
+  companyCount: number;
   emailSentCount: number;
 }
 
@@ -54,38 +55,50 @@ async function getAllCampaignStats(pb: PocketBase, campaignIds: string[]): Promi
 
   // Initialize all campaigns with zero counts
   for (const id of campaignIds) {
-    statsMap.set(id, { contactCount: 0, emailSentCount: 0 });
+    statsMap.set(id, { contactCount: 0, companyCount: 0, emailSentCount: 0 });
   }
 
   try {
-    // Fetch ALL contacts and email_sends in just 2 queries, only getting the campaign field
-    const [allContacts, allEmails] = await Promise.all([
+    // Fetch ALL contacts, companies, and email_sends in just 3 queries
+    const campaignFilter = campaignIds.map(id => pb.filter('campaign = {:id}', { id })).join(' || ');
+    const [allContacts, allCompanies, allEmails] = await Promise.all([
       pb.collection('contacts').getList(1, 1, {
         fields: 'id,campaign',
-        filter: campaignIds.map(id => pb.filter('campaign = {:id}', { id })).join(' || '),
+        filter: campaignFilter,
         skipTotal: false,
       }).then(async (first) => {
-        // If there are more than 1 page, we just need the count per campaign
-        // Fetch all with just campaign field for counting
         if (first.totalItems <= 500) {
           const all = await pb.collection('contacts').getList(1, 500, {
             fields: 'campaign',
-            filter: campaignIds.map(id => pb.filter('campaign = {:id}', { id })).join(' || '),
+            filter: campaignFilter,
           });
           return all.items;
         }
-        // For very large datasets, fall back to per-campaign counts
+        return null;
+      }),
+      pb.collection('companies').getList(1, 1, {
+        fields: 'id,campaign',
+        filter: campaignFilter,
+        skipTotal: false,
+      }).then(async (first) => {
+        if (first.totalItems <= 500) {
+          const all = await pb.collection('companies').getList(1, 500, {
+            fields: 'campaign',
+            filter: campaignFilter,
+          });
+          return all.items;
+        }
         return null;
       }),
       pb.collection('email_sends').getList(1, 1, {
         fields: 'id,campaign',
-        filter: campaignIds.map(id => pb.filter('campaign = {:id}', { id })).join(' || '),
+        filter: campaignFilter,
         skipTotal: false,
       }).then(async (first) => {
         if (first.totalItems <= 500) {
           const all = await pb.collection('email_sends').getList(1, 500, {
             fields: 'campaign',
-            filter: campaignIds.map(id => pb.filter('campaign = {:id}', { id })).join(' || '),
+            filter: campaignFilter,
           });
           return all.items;
         }
@@ -100,13 +113,28 @@ async function getAllCampaignStats(pb: PocketBase, campaignIds: string[]): Promi
         if (stats) stats.contactCount++;
       }
     } else {
-      // Fallback: parallel per-campaign counts for very large datasets
       await Promise.all(campaignIds.map(async (id) => {
         const result = await pb.collection('contacts').getList(1, 1, {
           filter: pb.filter('campaign = {:id}', { id }),
           fields: 'id',
         });
         statsMap.get(id)!.contactCount = result.totalItems;
+      }));
+    }
+
+    // Count companies per campaign
+    if (allCompanies) {
+      for (const company of allCompanies) {
+        const stats = statsMap.get(company.campaign);
+        if (stats) stats.companyCount++;
+      }
+    } else {
+      await Promise.all(campaignIds.map(async (id) => {
+        const result = await pb.collection('companies').getList(1, 1, {
+          filter: pb.filter('campaign = {:id}', { id }),
+          fields: 'id',
+        });
+        statsMap.get(id)!.companyCount = result.totalItems;
       }));
     }
 
@@ -424,7 +452,7 @@ function renderCampaignsGrid(
                 <div className="flex items-center gap-4 text-sm text-muted-foreground">
                   <div className="flex items-center gap-1">
                     <Users className="h-4 w-4" />
-                    <span>{stats?.contactCount ?? 0} {campaign.kind === 'leads' ? 'companies' : 'contacts'}</span>
+                    <span>{campaign.kind === 'leads' ? (stats?.companyCount ?? 0) : (stats?.contactCount ?? 0)} {campaign.kind === 'leads' ? 'companies' : 'contacts'}</span>
                   </div>
                   {campaign.kind !== 'leads' && (
                     <div className="flex items-center gap-1">
