@@ -17,6 +17,7 @@ import {
   updateContact,
   deleteContact,
   createCompany,
+  updateCompany,
   deleteCompany,
   getFunnelStages,
   getContactStages,
@@ -162,6 +163,7 @@ export default function BatchDetailPage() {
   const [manualUrls, setManualUrls] = useState<Partial<FirecrawlUrls>>({});
   const [showUrlPreview, setShowUrlPreview] = useState(false);
   const [minScore, setMinScore] = useState<string>("");
+  const [providerFilter, setProviderFilter] = useState<string>("all");
   const [sortByScore, setSortByScore] = useState<'asc' | 'desc' | null>(null);
 
   // State for inline company creation during contact creation
@@ -718,6 +720,22 @@ export default function BatchDetailPage() {
             console.error("Failed to create person:", err);
           }
         }
+      }
+
+      // Look up email provider in the background (don't block the modal)
+      if (newCompany.website) {
+        fetch("/api/lookup-mx", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: newCompany.website }),
+        })
+          .then((res) => res.json())
+          .then((data) => {
+            if (data.provider && data.provider !== "No MX Records") {
+              updateCompany(pb, newCompanyRecord.id, { email_provider: data.provider } as Partial<Company>).catch(console.error);
+            }
+          })
+          .catch(console.error);
       }
 
       toast({
@@ -1406,7 +1424,20 @@ export default function BatchDetailPage() {
     );
   });
 
+  // Unique email providers for filter dropdown
+  const uniqueProviders = Array.from(
+    new Set(companies.map((c) => c.email_provider).filter(Boolean) as string[])
+  ).sort();
+
   const filteredCompanies = companies.filter((company) => {
+    // Apply email provider filter
+    if (providerFilter !== "all") {
+      if (providerFilter === "none") {
+        if (company.email_provider) return false;
+      } else {
+        if (company.email_provider !== providerFilter) return false;
+      }
+    }
     // Apply minimum score filter
     const minScoreNum = parseFloat(minScore);
     if (!isNaN(minScoreNum) && minScoreNum > 0) {
@@ -1512,6 +1543,32 @@ export default function BatchDetailPage() {
                 min="0"
               />
             </div>
+            {/* Email Provider Filter */}
+            {uniqueProviders.length > 0 && (
+              <Select value={providerFilter} onValueChange={setProviderFilter}>
+                <SelectTrigger className="w-[200px]">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Mail className="h-4 w-4 flex-shrink-0" />
+                    {providerFilter === "all" ? (
+                      <span className="truncate">All Providers</span>
+                    ) : providerFilter === "none" ? (
+                      <span className="truncate">No Provider</span>
+                    ) : (
+                      <span className="truncate">{providerFilter}</span>
+                    )}
+                  </div>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Providers</SelectItem>
+                  <SelectItem value="none">No Provider</SelectItem>
+                  {uniqueProviders.map((provider) => (
+                    <SelectItem key={provider} value={provider}>
+                      {provider}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           </div>
 
           {/* Push All to Outreach Button */}
@@ -2077,6 +2134,7 @@ export default function BatchDetailPage() {
                 <TableHead className="min-w-[140px]">Description</TableHead>
                 <TableHead className="min-w-[140px]">Website</TableHead>
                 <TableHead className="min-w-[140px]">Email</TableHead>
+                <TableHead>Email Provider</TableHead>
                 <TableHead className="text-center">People</TableHead>
                 <TableHead
                   className="cursor-pointer hover:bg-muted/50 transition-colors"
@@ -2099,7 +2157,7 @@ export default function BatchDetailPage() {
             <TableBody>
               {filteredCompanies.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8 + (aiConfigs[0]?.custom_outputs?.length || 0)} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={9 + (aiConfigs[0]?.custom_outputs?.length || 0)} className="text-center py-12 text-muted-foreground">
                     {searchQuery
                       ? "No companies match your search"
                       : "No companies in this batch yet. Add your first company."}
@@ -2152,6 +2210,15 @@ export default function BatchDetailPage() {
                           <span className="truncate block" title={company.email || undefined}>
                             {company.email || <span className="text-muted-foreground">-</span>}
                           </span>
+                        </TableCell>
+                        <TableCell>
+                          {company.email_provider ? (
+                            <Badge variant="secondary" className="truncate max-w-[140px] text-xs" title={company.email_provider}>
+                              {company.email_provider}
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">-</span>
+                          )}
                         </TableCell>
                         <TableCell className="text-center">
                           <Badge variant="secondary">{people.length}</Badge>

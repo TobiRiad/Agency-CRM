@@ -14,6 +14,7 @@ import {
   updateContact,
   deleteContact,
   createCompany,
+  updateCompany,
   deleteCompany,
   setContactFieldValue,
   getFunnelStages,
@@ -116,6 +117,7 @@ export default function CampaignPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [stageFilter, setStageFilter] = useState<string>("all");
   const [batchFilter, setBatchFilter] = useState<string>("all");
+  const [providerFilter, setProviderFilter] = useState<string>("all");
   const [minScore, setMinScore] = useState<string>("");
   const [sortByScore, setSortByScore] = useState<'asc' | 'desc' | null>(null);
   const [isAddContactOpen, setIsAddContactOpen] = useState(false);
@@ -747,6 +749,22 @@ export default function CampaignPage() {
             console.error("Failed to create person:", err);
           }
         }
+      }
+
+      // Look up email provider in the background (don't block the modal)
+      if (newCompany.website) {
+        fetch("/api/lookup-mx", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: newCompany.website }),
+        })
+          .then((res) => res.json())
+          .then((data) => {
+            if (data.provider && data.provider !== "No MX Records") {
+              updateCompany(pb, newCompanyRecord.id, { email_provider: data.provider } as Partial<Company>).catch(console.error);
+            }
+          })
+          .catch(console.error);
       }
 
       toast({
@@ -1395,6 +1413,11 @@ export default function CampaignPage() {
     return fieldValues.get(contactId)?.get(fieldId) || "";
   };
 
+  // Unique email providers for filter dropdown
+  const uniqueProviders = Array.from(
+    new Set(companies.map((c) => c.email_provider).filter(Boolean) as string[])
+  ).sort();
+
   // Filter companies by batch (for leads campaigns)
   const filteredCompanies = companies
     .filter((company) => {
@@ -1406,6 +1429,14 @@ export default function CampaignPage() {
         } else {
           // Filter for specific batch
           if (company.batch !== batchFilter) return false;
+        }
+      }
+      // Apply email provider filter
+      if (providerFilter !== "all") {
+        if (providerFilter === "none") {
+          if (company.email_provider) return false;
+        } else {
+          if (company.email_provider !== providerFilter) return false;
         }
       }
       // Apply minimum score filter
@@ -2060,6 +2091,32 @@ export default function CampaignPage() {
                 min="0"
               />
             </div>
+            {/* Email Provider Filter */}
+            {uniqueProviders.length > 0 && (
+              <Select value={providerFilter} onValueChange={setProviderFilter}>
+                <SelectTrigger className="w-[200px]">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Mail className="h-4 w-4 flex-shrink-0" />
+                    {providerFilter === "all" ? (
+                      <span className="truncate">All Providers</span>
+                    ) : providerFilter === "none" ? (
+                      <span className="truncate">No Provider</span>
+                    ) : (
+                      <span className="truncate">{providerFilter}</span>
+                    )}
+                  </div>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Providers</SelectItem>
+                  <SelectItem value="none">No Provider</SelectItem>
+                  {uniqueProviders.map((provider) => (
+                    <SelectItem key={provider} value={provider}>
+                      {provider}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           </div>
           <Dialog open={isAddBatchOpen} onOpenChange={setIsAddBatchOpen}>
             <DialogTrigger asChild>
@@ -2114,6 +2171,7 @@ export default function CampaignPage() {
                 <TableHead className="min-w-[140px]">Description</TableHead>
                 <TableHead className="min-w-[140px]">Website</TableHead>
                 <TableHead className="min-w-[140px]">Email</TableHead>
+                <TableHead>Email Provider</TableHead>
                 <TableHead>Batch</TableHead>
                 <TableHead className="text-center">People</TableHead>
                 <TableHead
@@ -2138,7 +2196,7 @@ export default function CampaignPage() {
             <TableBody>
               {filteredCompanies.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={9 + (aiConfigs[0]?.custom_outputs?.length || 0)} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={10 + (aiConfigs[0]?.custom_outputs?.length || 0)} className="text-center py-12 text-muted-foreground">
                     {batchFilter !== "all"
                       ? "No companies match your filter"
                       : "No lead companies yet. Add your first company to get started."}
@@ -2193,6 +2251,15 @@ export default function CampaignPage() {
                           <span className="truncate block" title={company.email || undefined}>
                             {company.email || <span className="text-muted-foreground">-</span>}
                           </span>
+                        </TableCell>
+                        <TableCell>
+                          {company.email_provider ? (
+                            <Badge variant="secondary" className="truncate max-w-[140px] text-xs" title={company.email_provider}>
+                              {company.email_provider}
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">-</span>
+                          )}
                         </TableCell>
                         <TableCell>
                           {company.expand?.batch ? (
