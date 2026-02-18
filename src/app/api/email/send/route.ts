@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sendEmail } from "@/lib/resend";
 import { sendGmail, GmailConfig } from "@/lib/gmail";
-import { getServerAdminPB, getServerPB, createEmailSend } from "@/lib/pocketbase";
+import { getServerAdminPB } from "@/lib/pocketbase";
 import { getUnsubscribeUrl } from "@/lib/unsubscribe";
 
 type EmailProvider = "resend" | "gmail";
@@ -167,21 +167,16 @@ export async function POST(request: NextRequest) {
     const domain = (gmailEmail || 'crm.local').split('@')[1] || 'crm.local';
     const generatedMessageId = `<${Date.now()}.${Math.random().toString(36).slice(2)}@${domain}>`;
 
-    // Record the email send in PocketBase (with threading fields)
+    // Record the email send in PocketBase (with threading fields in a single create)
     try {
-      // Use admin PB because email_sends rules require auth and this is a server route.
       const pb = await getServerAdminPB();
-      const emailSendRecord = await createEmailSend(pb, {
+      await pb.collection("email_sends").create({
         contact: contactId,
         template: templateId,
         campaign: campaignId,
         resend_id: result.id || "",
         status: "sent",
         sent_at: new Date().toISOString(),
-      });
-
-      // Update with threading data using the record ID directly (no re-query needed)
-      await pb.collection("email_sends").update(emailSendRecord.id, {
         message_id: generatedMessageId,
         thread_id: result.threadId || threadId || "",
         in_reply_to: inReplyTo || "",
@@ -189,7 +184,6 @@ export async function POST(request: NextRequest) {
       });
     } catch (dbError) {
       console.error("Failed to record email send:", dbError);
-      // Don't fail the request if DB recording fails
     }
 
     return NextResponse.json({
