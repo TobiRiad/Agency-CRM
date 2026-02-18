@@ -214,6 +214,9 @@ export default function CampaignPage() {
   const [outreachCampaignBatches, setOutreachCampaignBatches] = useState<Batch[]>([]);
   const [selectedCompanyForPerson, setSelectedCompanyForPerson] = useState<string>("");
   const [isAddPersonOpen, setIsAddPersonOpen] = useState(false);
+  const [detectingProviderId, setDetectingProviderId] = useState<string | null>(null);
+  const [isBulkDetecting, setIsBulkDetecting] = useState(false);
+  const [bulkDetectProgress, setBulkDetectProgress] = useState({ done: 0, total: 0 });
   const [newPerson, setNewPerson] = useState({
     email: "",
     first_name: "",
@@ -1074,6 +1077,64 @@ export default function CampaignPage() {
       title: "Copied!",
       description: "Company data copied to clipboard.",
     });
+  };
+
+  const handleDetectProvider = async (companyId: string) => {
+    const company = companies.find((c) => c.id === companyId);
+    if (!company?.website) {
+      toast({ title: "No website", description: "Company has no website to look up.", variant: "destructive" });
+      return;
+    }
+    setDetectingProviderId(companyId);
+    try {
+      const res = await fetch("/api/lookup-mx", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: company.website }),
+      });
+      const data = await res.json();
+      const provider = data.provider && data.provider !== "No MX Records" ? data.provider : "No MX Records";
+      const pb = getClientPB();
+      await updateCompany(pb, companyId, { email_provider: provider } as Partial<Company>);
+      setCompanies((prev) => prev.map((c) => (c.id === companyId ? { ...c, email_provider: provider } : c)));
+      toast({ title: "Provider detected", description: `${company.name}: ${provider}` });
+    } catch {
+      toast({ title: "Detection failed", description: "Could not detect email provider.", variant: "destructive" });
+    } finally {
+      setDetectingProviderId(null);
+    }
+  };
+
+  const handleBulkDetectProviders = async () => {
+    const companiesNeedingDetect = filteredCompanies.filter((c) => !c.email_provider && c.website);
+    if (companiesNeedingDetect.length === 0) {
+      toast({ title: "Nothing to detect", description: "All visible companies already have providers or no website." });
+      return;
+    }
+    setIsBulkDetecting(true);
+    setBulkDetectProgress({ done: 0, total: companiesNeedingDetect.length });
+    const pb = getClientPB();
+    let detected = 0;
+    for (let i = 0; i < companiesNeedingDetect.length; i++) {
+      const company = companiesNeedingDetect[i];
+      try {
+        const res = await fetch("/api/lookup-mx", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: company.website }),
+        });
+        const data = await res.json();
+        const provider = data.provider && data.provider !== "No MX Records" ? data.provider : "No MX Records";
+        await updateCompany(pb, company.id, { email_provider: provider } as Partial<Company>);
+        setCompanies((prev) => prev.map((c) => (c.id === company.id ? { ...c, email_provider: provider } : c)));
+        detected++;
+      } catch {
+        console.error("Failed to detect provider for", company.name);
+      }
+      setBulkDetectProgress({ done: i + 1, total: companiesNeedingDetect.length });
+    }
+    setIsBulkDetecting(false);
+    toast({ title: "Bulk detection complete", description: `Detected providers for ${detected} of ${companiesNeedingDetect.length} companies.` });
   };
 
   const handlePushToOutreach = async (companyId: string) => {
@@ -2117,6 +2178,27 @@ export default function CampaignPage() {
                 </SelectContent>
               </Select>
             )}
+            {/* Detect All Providers Button */}
+            {filteredCompanies.some((c) => !c.email_provider && c.website) && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleBulkDetectProviders}
+                disabled={isBulkDetecting}
+              >
+                {isBulkDetecting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Detecting ({bulkDetectProgress.done}/{bulkDetectProgress.total})
+                  </>
+                ) : (
+                  <>
+                    <Search className="h-4 w-4 mr-2" />
+                    Detect Providers ({filteredCompanies.filter((c) => !c.email_provider && c.website).length})
+                  </>
+                )}
+              </Button>
+            )}
           </div>
           <Dialog open={isAddBatchOpen} onOpenChange={setIsAddBatchOpen}>
             <DialogTrigger asChild>
@@ -2257,6 +2339,23 @@ export default function CampaignPage() {
                             <Badge variant="secondary" className="truncate max-w-[140px] text-xs" title={company.email_provider}>
                               {company.email_provider}
                             </Badge>
+                          ) : company.website ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 px-2 text-xs text-muted-foreground"
+                              onClick={() => handleDetectProvider(company.id)}
+                              disabled={detectingProviderId === company.id}
+                            >
+                              {detectingProviderId === company.id ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <>
+                                  <Search className="h-3 w-3 mr-1" />
+                                  Detect
+                                </>
+                              )}
+                            </Button>
                           ) : (
                             <span className="text-muted-foreground text-xs">-</span>
                           )}

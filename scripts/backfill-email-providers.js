@@ -34,6 +34,8 @@ const PB = process.env.POCKETBASE_URL || process.env.NEXT_PUBLIC_POCKETBASE_URL 
 const dryRun = process.argv.includes('--dry-run');
 const campaignArg = process.argv.find(a => a.startsWith('--campaign='));
 const campaignFilter = campaignArg ? campaignArg.split('=')[1] : null;
+const batchArg = process.argv.find(a => a.startsWith('--batch='));
+const batchFilter = batchArg ? batchArg.split('=')[1] : null;
 
 const KNOWN_PROVIDERS = [
   { pattern: /google\.com$/i, name: 'Google Workspace' },
@@ -166,6 +168,7 @@ async function main() {
   // Fetch companies without email_provider that have a website
   let filter = 'website != "" && (email_provider = "" || email_provider = null)';
   if (campaignFilter) filter += ` && campaign = "${campaignFilter}"`;
+  if (batchFilter) filter += ` && batch = "${batchFilter}"`;
 
   let page = 1;
   let totalProcessed = 0;
